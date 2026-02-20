@@ -53,7 +53,7 @@ public class OpenF1Worker : BackgroundService {
 						if (F1Registry.Drivers.TryGetValue(driverNum, out var driver)) {
 							var team = F1Registry.Teams[driver.TeamKey];
 
-							// Wir schicken ein konsistentes Paket an HA
+							// Wir schicken ein konsistentes Paket an MQTT
 							await PublishEvent("f1/race/p1", new {
 								driver = driver.Name,
 								short_name = driver.Abbreviation,
