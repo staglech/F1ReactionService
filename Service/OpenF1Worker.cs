@@ -1,20 +1,52 @@
-﻿using System.Net.Http.Json;
+﻿using F1ReactionService.Model;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading.Channels;
 
 namespace F1ReactionService;
 
+/// <summary>
+/// Provides a background service that monitors Formula 1 session data from the OpenF1 API and publishes race events
+/// such as leader changes and track status updates to a channel for downstream processing.
+/// </summary>
+/// <remarks>This worker periodically polls the OpenF1 API for the latest session, position, and track status
+/// information. It emits events when the race leader changes or when the track status flag changes. The service remains
+/// idle until activated by a session state signal or a timeout. Designed for integration with systems that consume
+/// real-time Formula 1 telemetry or event data. Thread safety is managed internally, and the service is intended to run
+/// for the application's lifetime.</remarks>
 public class OpenF1Worker : BackgroundService {
 	private readonly IHttpClientFactory _httpClientFactory;
 	private readonly ChannelWriter<RaceEvent> _channelWriter;
 	private readonly ILogger<OpenF1Worker> _logger;
+	private readonly F1SessionState _sessionState;
 
-	public OpenF1Worker(IHttpClientFactory httpClientFactory, Channel<RaceEvent> channel, ILogger<OpenF1Worker> logger) {
+	/// <summary>
+	/// Initializes a new instance of the OpenF1Worker class with the specified HTTP client factory, event channel, logger,
+	/// and session state.
+	/// </summary>
+	/// <param name="httpClientFactory">The factory used to create HTTP client instances for making external API requests. Cannot be null.</param>
+	/// <param name="channel">The channel used to send RaceEvent messages for processing. Cannot be null.</param>
+	/// <param name="logger">The logger used to record diagnostic and operational information. Cannot be null.</param>
+	/// <param name="sessionState">The session state object that tracks the current Formula 1 session context. Cannot be null.</param>
+	public OpenF1Worker(IHttpClientFactory httpClientFactory,
+		Channel<RaceEvent> channel,
+		ILogger<OpenF1Worker> logger,
+		F1SessionState sessionState) {
 		_httpClientFactory = httpClientFactory;
 		_channelWriter = channel.Writer;
 		_logger = logger;
+		_sessionState = sessionState;
 	}
 
+	/// <summary>
+	/// Executes the background worker loop that monitors OpenF1 session state, retrieves session and leader information,
+	/// and publishes relevant events until cancellation is requested.
+	/// </summary>
+	/// <remarks>The method periodically checks the OpenF1 API for session and leader updates, and waits for either
+	/// a wake-up signal or a timeout when the session is inactive. It logs status information and publishes events when
+	/// the leader changes. The loop continues until the provided cancellation token is signaled.</remarks>
+	/// <param name="stoppingToken">A cancellation token that can be used to request the termination of the background operation.</param>
+	/// <returns>A task that represents the asynchronous execution of the background worker loop.</returns>
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
 		var client = _httpClientFactory.CreateClient("OpenF1");
 		string? lastStatus = null;
@@ -25,6 +57,21 @@ public class OpenF1Worker : BackgroundService {
 		_logger.LogInformation("🏎️ OpenF1Worker mit P1-Logik gestartet.");
 
 		while (!stoppingToken.IsCancellationRequested) {
+
+			if (!_sessionState.IsActive) {
+				_logger.LogInformation("💤 Standby. Warte auf START-Signal oder Timer...");
+
+				// Hier passiert die Magie:
+				// Er wartet entweder bis jemand die Klingel drückt (Release)
+				// ODER bis 10 Minuten um sind (Timeout)
+				// ODER bis der Container gestoppt wird (stoppingToken)
+				await _sessionState.WakeUpSignal.WaitAsync(TimeSpan.FromMinutes(10), stoppingToken);
+
+				// Wenn wir hier ankommen, hat entweder jemand geklingelt oder die 10 Min sind um.
+				// Wir springen an den Anfang der Schleife und prüfen 'IsActive'.
+				continue;
+			}
+
 			try {
 				// 1. Session Info holen (alle 30 Sek reicht hier eigentlich, aber wir machen es im Loop)
 				var sessions = await client.GetFromJsonAsync<List<JsonElement>>("sessions?session_key=latest", stoppingToken);
@@ -76,6 +123,16 @@ public class OpenF1Worker : BackgroundService {
 		}
 	}
 
+	/// <summary>
+	/// Checks the latest track status and publishes an event if the status has changed.
+	/// </summary>
+	/// <remarks>If the track status has changed since the last check, this method updates the status and publishes
+	/// a flag status event. The method does not publish an event if the status is unchanged or unavailable.</remarks>
+	/// <param name="client">The HTTP client used to retrieve the latest track status from the remote service.</param>
+	/// <param name="ct">A cancellation token that can be used to cancel the asynchronous operation.</param>
+	/// <param name="setLastStatus">An action to update the last known status when a change is detected.</param>
+	/// <param name="lastStatus">The previously recorded track status, or null if no status has been recorded.</param>
+	/// <returns>A task that represents the asynchronous operation.</returns>
 	private async Task CheckTrackStatus(HttpClient client, CancellationToken ct, Action<string> setLastStatus, string? lastStatus) {
 		var statusList = await client.GetFromJsonAsync<List<JsonElement>>("track_status?session_key=latest", ct);
 		var current = statusList?.LastOrDefault();
@@ -91,12 +148,26 @@ public class OpenF1Worker : BackgroundService {
 		}
 	}
 
+	/// <summary>
+	/// Publishes an event with the specified topic and payload to the event channel asynchronously.
+	/// </summary>
+	/// <remarks>The event is serialized to JSON before being written to the channel. This method does not guarantee
+	/// immediate delivery; the event is queued for processing.</remarks>
+	/// <param name="topic">The topic name that categorizes the event. Cannot be null or empty.</param>
+	/// <param name="payload">The event data to be published. The object will be serialized to JSON before publishing. Cannot be null.</param>
+	/// <returns>A task that represents the asynchronous publish operation.</returns>
 	private async Task PublishEvent(string topic, object payload) {
 		var json = JsonSerializer.Serialize(payload);
 		await _channelWriter.WriteAsync(new RaceEvent(topic, json));
 	}
 
-	private string MapFlag(string status) => status switch {
+	/// <summary>
+	/// Maps a status code to its corresponding flag name.
+	/// </summary>
+	/// <param name="status">The status code to map. Expected values are "1", "2", "4", "5", or "6". Other values will be mapped to "UNKNOWN".</param>
+	/// <returns>A string representing the flag name corresponding to the specified status code. Returns "UNKNOWN" if the status
+	/// code is not recognized.</returns>
+	private static string MapFlag(string status) => status switch {
 		"1" => "GREEN",
 		"2" => "YELLOW",
 		"4" => "SC",

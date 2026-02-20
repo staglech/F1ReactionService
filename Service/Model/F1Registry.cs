@@ -1,12 +1,21 @@
-﻿namespace F1ReactionService;
+﻿namespace F1ReactionService.Model;
 
-public record DriverInfo(string Name, string Abbreviation, string TeamKey);
-// Jetzt mit den zugehörigen Fahrernummern
-public record TeamInfo(string Name, string ColorHex, int[] DriverNumbers);
-
+/// <summary>
+/// Provides static registries for Formula 1 teams and drivers, enabling lookup of team and driver information by unique
+/// identifiers.
+/// </summary>
+/// <remarks>The F1Registry class exposes read-only dictionaries for teams and drivers, allowing applications to
+/// retrieve details such as team names, colors, driver names, and associations. The collections are intended for
+/// reference and should not be modified at runtime.</remarks>
 public static class F1Registry {
-	public static readonly Dictionary<string, TeamInfo> Teams = new()
-	{
+
+	/// <summary>
+	/// Provides a read-only dictionary of team identifiers mapped to their corresponding team information.
+	/// </summary>
+	/// <remarks>The dictionary keys are unique string identifiers for each team. The values are instances of the
+	/// TeamInfo class containing details such as the team's name, color, and associated driver numbers. The collection is
+	/// intended for lookup and reference purposes and should not be modified at runtime.</remarks>
+	public static readonly Dictionary<string, TeamInfo> Teams = new() {
 		{ "red_bull", new TeamInfo("Red Bull Racing", "#4781D7", [3, 6]) },
 		{ "ferrari", new TeamInfo("Ferrari", "#ED1131", [16, 44]) },
 		{ "mercedes", new TeamInfo("Mercedes", "#00D7B6", [12, 63]) },
@@ -20,8 +29,13 @@ public static class F1Registry {
 		{ "cadillac", new TeamInfo("Cadillac", "#D3D3D3", [11, 77]) }
 	};
 
-	public static readonly Dictionary<int, DriverInfo> Drivers = new()
-	{
+	/// <summary>
+	/// Provides a mapping of driver numbers to their corresponding driver information.
+	/// </summary>
+	/// <remarks>The dictionary contains entries for each driver, where the key is the driver's unique number and
+	/// the value is a DriverInfo object containing the driver's name, abbreviation, and team identifier. The collection is
+	/// read-only and intended for lookup purposes.</remarks>
+	public static readonly Dictionary<int, DriverInfo> Drivers = new() {
 		{ 1, new DriverInfo("Lando Norris", "NOR", "mclaren") },
 		{ 81, new DriverInfo("Oscar Piastri", "PIA", "mclaren") },
 		{ 3, new DriverInfo("Max Verstappen", "VER", "red_bull") },
