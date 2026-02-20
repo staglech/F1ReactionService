@@ -2,7 +2,7 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [ "main" ] # Führt den Workflow aus, wenn du auf 'main' pushst
+    branches: [ "master" ] # Führt den Workflow aus, wenn du auf 'master' pushst
 
 env:
   REGISTRY: ghcr.io
