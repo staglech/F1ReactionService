@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/Service/">
+    <Project Path="Service/F1ReactionService.csproj" />
+  </Folder>
+</Solution>
