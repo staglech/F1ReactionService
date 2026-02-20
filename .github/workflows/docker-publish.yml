@@ -6,7 +6,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }} # Das wird automatisch staglech/f1reactionservice
+  IMAGE_NAME: ${{ github.repository_owner }}/f1reactionservice
 
 jobs:
   build-and-push:
