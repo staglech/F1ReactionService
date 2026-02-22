@@ -72,6 +72,11 @@ public class OpenF1Worker : BackgroundService {
 				continue;
 			}
 
+			if (_sessionState.IsDemoMode) {
+				await RunDemoSequence(stoppingToken);
+				continue; // Nach dem Skript fängt er wieder von vorne an, solange IsDemoMode an ist
+			}
+
 			try {
 				// 1. Session Info holen (alle 30 Sek reicht hier eigentlich, aber wir machen es im Loop)
 				var sessions = await client.GetFromJsonAsync<List<JsonElement>>("sessions?session_key=latest", stoppingToken);
@@ -128,6 +133,7 @@ public class OpenF1Worker : BackgroundService {
 							// Wir schicken ein konsistentes Paket an MQTT
 							await PublishEvent("f1/race/p1", new {
 								driver = driver.Name,
+								driver_number = driverNum,
 								short_name = driver.Abbreviation,
 								team = team.Name,
 								color = team.ColorHex,
@@ -201,4 +207,45 @@ public class OpenF1Worker : BackgroundService {
 		"6" => "VSC",
 		_ => "UNKNOWN"
 	};
+
+	#region [ Demo data ]
+
+	/// <summary>
+	/// Runs a demonstration sequence that simulates a series of race events by publishing status updates and delays
+	/// between scenes.
+	/// </summary>
+	/// <remarks>This method is intended for demonstration or testing purposes and simulates race scenarios by
+	/// publishing events and introducing delays. The sequence can be interrupted by cancelling the provided
+	/// token.</remarks>
+	/// <param name="ct">A cancellation token that can be used to cancel the demo sequence before completion.</param>
+	/// <returns>A task that represents the asynchronous operation of running the demo sequence.</returns>
+	private async Task RunDemoSequence(CancellationToken ct) {
+		_logger.LogInformation("🎬 Starte Demo-Szene 1: Rennstart (Grün & Red Bull führt)");
+		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
+		await PublishEvent("f1/race/p1", new { driver = "Max Verstappen", short_name = "VER", team = "Red Bull Racing", color = "#4781D7", reason = "Race Leader", session = "Race", is_live = true });
+		await Task.Delay(8000, ct); // 8 Sekunden warten
+
+		_logger.LogInformation("🎬 Starte Demo-Szene 2: Gelbe Flagge Sektor 2");
+		await PublishEvent("f1/race/flag_status", new { FLAG = "YELLOW", MESSAGE = "Yellow in Sector 2" });
+		await Task.Delay(5000, ct);
+
+		_logger.LogInformation("🎬 Starte Demo-Szene 3: Safety Car & McLaren übernimmt Führung");
+		await PublishEvent("f1/race/flag_status", new { FLAG = "SC", MESSAGE = "Safety Car Deployed" });
+		await PublishEvent("f1/race/p1", new { driver = "Lando Norris", short_name = "NOR", team = "McLaren", color = "#F47600", reason = "Race Leader", session = "Race", is_live = true });
+		await Task.Delay(8000, ct);
+
+		_logger.LogInformation("🎬 Starte Demo-Szene 4: Rote Flagge");
+		await PublishEvent("f1/race/flag_status", new { FLAG = "RED", MESSAGE = "Session Suspended" });
+		await Task.Delay(5000, ct);
+
+		_logger.LogInformation("🎬 Starte Demo-Szene 5: Restart & Ferrari führt");
+		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
+		await PublishEvent("f1/race/p1", new { driver = "Lewis Hamilton", short_name = "HAM", team = "Ferrari", color = "#ED1131", reason = "Race Leader", session = "Race", is_live = true });
+		await Task.Delay(8000, ct);
+
+		_logger.LogInformation("🏁 Demo-Durchlauf beendet. Pause für 10 Sekunden, dann Neustart...");
+		await Task.Delay(10000, ct);
+	}
+
+	#endregion [ Demo data ]
 }

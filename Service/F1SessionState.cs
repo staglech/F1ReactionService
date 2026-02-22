@@ -24,6 +24,11 @@ public class F1SessionState {
 	public bool IsActive { get; set; } = false;
 
 	/// <summary>
+	/// Gets or sets a value indicating whether the application is running in demo mode.
+	/// </summary>
+	public bool IsDemoMode { get; set; } = false;
+
+	/// <summary>
 	/// Gets a semaphore used to signal and coordinate wake-up events between threads.
 	/// </summary>
 	/// <remarks>This semaphore is typically used to notify a waiting thread that it should resume execution. The

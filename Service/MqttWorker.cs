@@ -81,6 +81,7 @@ public class MqttWorker : BackgroundService {
 
 			switch (command) {
 				case "START":
+					_sessionState.IsDemoMode = false;
 					_sessionState.IsActive = true;
 					if (_sessionState.WakeUpSignal.CurrentCount == 0) {
 						_sessionState.WakeUpSignal.Release();
@@ -88,7 +89,18 @@ public class MqttWorker : BackgroundService {
 					_logger.LogWarning("🚀 F1-Dienst AUFGEWACHT! Starte Polling...");
 					break;
 
+				case "DEMO_START":
+					_sessionState.IsDemoMode = true;
+					_sessionState.IsActive = true;
+					_logger.LogWarning("🎪 DEMO-MODUS GESTARTET! Spiele Test-Skript ab...");
+					if (_sessionState.WakeUpSignal.CurrentCount == 0) {
+						_sessionState.WakeUpSignal.Release();
+					}
+
+					break;
+
 				case "STOP":
+					_sessionState.IsDemoMode = false;
 					_sessionState.IsActive = false;
 					_sessionState.TrueDataStartTime = null; // Reset für nächstes Mal
 					_logger.LogWarning("💤 F1-Dienst geht in den STANDBY.");
