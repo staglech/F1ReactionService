@@ -76,10 +76,35 @@ public class OpenF1Worker : BackgroundService {
 				// 1. Session Info holen (alle 30 Sek reicht hier eigentlich, aber wir machen es im Loop)
 				var sessions = await client.GetFromJsonAsync<List<JsonElement>>("sessions?session_key=latest", stoppingToken);
 				var session = sessions?.LastOrDefault();
+
+				bool isLive = false;
+				bool isStale = false;
+
 				if (session != null && session.Value.ValueKind != JsonValueKind.Undefined) {
 					currentSessionName = session.Value.GetProperty("session_name").GetString() ?? "Unknown";
 					// Prüfen, ob es ein echtes Rennen ist
 					isRace = currentSessionName.Contains("Race", StringComparison.OrdinalIgnoreCase);
+
+					// Zeitstempel auslesen (OpenF1 liefert immer UTC)
+					if (session.Value.TryGetProperty("date_start", out var startProp) &&
+						session.Value.TryGetProperty("date_end", out var endProp)) {
+						var dateStart = startProp.GetDateTime();
+						var dateEnd = endProp.GetDateTime();
+						var now = DateTime.UtcNow;
+
+						// Ist das Event JETZT gerade live? (Mit 30 Min Puffer nach hinten für Siegerehrung)
+						isLive = now >= dateStart && now <= dateEnd.AddMinutes(30);
+
+						// Ist das Event schon völlig veraltet? (Älter als 24 Stunden)
+						isStale = (now - dateEnd).TotalHours > 24;
+					}
+				}
+
+				// Wenn die Daten uralt sind (wie Day 3 von letzter Woche), brechen wir hier ab!
+				if (isStale) {
+					_logger.LogDebug("Letzte Session ist älter als 24h. Ignoriere Daten.");
+					await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+					continue; // Springt zurück an den Anfang der while-Schleife
 				}
 
 				// 2. Track Status (Flaggen)
@@ -107,7 +132,8 @@ public class OpenF1Worker : BackgroundService {
 								team = team.Name,
 								color = team.ColorHex,
 								reason = isRace ? "Race Leader" : "Fastest Lap",
-								session = currentSessionName
+								session = currentSessionName,
+								is_live = isLive
 							});
 
 							_logger.LogWarning("🏆 P1 WECHSEL: {name} ({reason} in {session})",
