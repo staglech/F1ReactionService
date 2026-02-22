@@ -8,6 +8,7 @@ builder.Services.AddHttpClient("OpenF1", client => {
 	client.BaseAddress = new Uri("https://api.openf1.org/v1/");
 });
 
+builder.Services.AddSingleton<F1SessionState>();
 builder.Services.AddSingleton(Channel.CreateUnbounded<RaceEvent>());
 
 builder.Services.AddHostedService<OpenF1Worker>();
