@@ -78,7 +78,7 @@ public class OpenF1Worker : BackgroundService {
 			}
 
 			try {
-				// 1. Session Info holen (alle 30 Sek reicht hier eigentlich, aber wir machen es im Loop)
+				// 1. Get session info
 				var sessions = await client.GetFromJsonAsync<List<JsonElement>>("sessions?session_key=latest", stoppingToken);
 				var session = sessions?.LastOrDefault();
 
@@ -87,37 +87,36 @@ public class OpenF1Worker : BackgroundService {
 
 				if (session != null && session.Value.ValueKind != JsonValueKind.Undefined) {
 					currentSessionName = session.Value.GetProperty("session_name").GetString() ?? "Unknown";
-					// Prüfen, ob es ein echtes Rennen ist
+					// Check whether it is a real race or just practice/qualifying
 					isRace = currentSessionName.Contains("Race", StringComparison.OrdinalIgnoreCase);
 
-					// Zeitstempel auslesen (OpenF1 liefert immer UTC)
+					// Read the timestamp (OpenF1 always returns UTC)
 					if (session.Value.TryGetProperty("date_start", out var startProp) &&
 						session.Value.TryGetProperty("date_end", out var endProp)) {
 						var dateStart = startProp.GetDateTime();
 						var dateEnd = endProp.GetDateTime();
 						var now = DateTime.UtcNow;
 
-						// Ist das Event JETZT gerade live? (Mit 30 Min Puffer nach hinten für Siegerehrung)
+						// Is the event live right now? (With a 30min buffer for after the race for the podium ceremony)
 						isLive = now >= dateStart && now <= dateEnd.AddMinutes(30);
 
-						// Ist das Event schon völlig veraltet? (Älter als 24 Stunden)
+						// Is the event old?? (Older than 24 hours)
 						isStale = (now - dateEnd).TotalHours > 24;
 					}
 				}
 
-				// Wenn die Daten uralt sind (wie Day 3 von letzter Woche), brechen wir hier ab!
+				// If the data is old we stop processing!
 				if (isStale) {
 					_logger.LogDebug("Letzte Session ist älter als 24h. Ignoriere Daten.");
 					await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
-					continue; // Springt zurück an den Anfang der while-Schleife
+					continue;
 				}
 
-				// 2. Track Status (Flaggen)
+				// 2. Track state (falsgs)
 				await CheckTrackStatus(client, stoppingToken, (s) => lastStatus = s, lastStatus);
 
-				// 3. P1 Logik (Leader oder Fastest Lap)
-				// OpenF1 gibt bei position=1 praktischerweise immer den "Besten" zurück:
-				// Im Rennen den Führenden, im Training/Qualy den mit der schnellsten Zeit.
+				// 3. Leader state
+				// OpenF1 returns for p1 always the "best" driver: In races the leader, in practice/qualifying the one with the fastest lap.
 				var posList = await client.GetFromJsonAsync<List<JsonElement>>("position?session_key=latest&position=1", stoppingToken);
 				var p1Data = posList?.LastOrDefault();
 
@@ -130,7 +129,6 @@ public class OpenF1Worker : BackgroundService {
 						if (F1Registry.Drivers.TryGetValue(driverNum, out var driver)) {
 							var team = F1Registry.Teams[driver.TeamKey];
 
-							// Wir schicken ein konsistentes Paket an MQTT
 							await PublishEvent("f1/race/p1", new {
 								driver = driver.Name,
 								driver_number = driverNum,
