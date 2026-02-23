@@ -222,8 +222,8 @@ public class OpenF1Worker : BackgroundService {
 	private async Task RunDemoSequence(CancellationToken ct) {
 		_logger.LogInformation("🎬 Starte Demo-Szene 1: Rennstart (Grün & Red Bull führt)");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
-		await PublishEvent("f1/race/p1", new { driver = "Max Verstappen", short_name = "VER", team = "Red Bull Racing", color = "#4781D7", reason = "Race Leader", session = "Race", is_live = true });
-		await Task.Delay(8000, ct); // 8 Sekunden warten
+		await PublishEvent("f1/race/p1", new { driver = "Max Verstappen", driver_number = 1, short_name = "VER", team = "Red Bull Racing", color = "#4781D7", reason = "Race Leader", session = "Race", is_live = true });
+		await Task.Delay(8000, ct);
 
 		_logger.LogInformation("🎬 Starte Demo-Szene 2: Gelbe Flagge Sektor 2");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "YELLOW", MESSAGE = "Yellow in Sector 2" });
@@ -231,7 +231,7 @@ public class OpenF1Worker : BackgroundService {
 
 		_logger.LogInformation("🎬 Starte Demo-Szene 3: Safety Car & McLaren übernimmt Führung");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "SC", MESSAGE = "Safety Car Deployed" });
-		await PublishEvent("f1/race/p1", new { driver = "Lando Norris", short_name = "NOR", team = "McLaren", color = "#F47600", reason = "Race Leader", session = "Race", is_live = true });
+		await PublishEvent("f1/race/p1", new { driver = "Lando Norris", driver_number = 4, short_name = "NOR", team = "McLaren", color = "#F47600", reason = "Race Leader", session = "Race", is_live = true });
 		await Task.Delay(8000, ct);
 
 		_logger.LogInformation("🎬 Starte Demo-Szene 4: Rote Flagge");
@@ -240,7 +240,7 @@ public class OpenF1Worker : BackgroundService {
 
 		_logger.LogInformation("🎬 Starte Demo-Szene 5: Restart & Ferrari führt");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
-		await PublishEvent("f1/race/p1", new { driver = "Lewis Hamilton", short_name = "HAM", team = "Ferrari", color = "#ED1131", reason = "Race Leader", session = "Race", is_live = true });
+		await PublishEvent("f1/race/p1", new { driver = "Lewis Hamilton", driver_number = 44, short_name = "HAM", team = "Ferrari", color = "#ED1131", reason = "Race Leader", session = "Race", is_live = true });
 		await Task.Delay(8000, ct);
 
 		_logger.LogInformation("🏁 Demo-Durchlauf beendet. Pause für 10 Sekunden, dann Neustart...");
