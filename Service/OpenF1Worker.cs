@@ -19,6 +19,7 @@ public class OpenF1Worker : BackgroundService {
 	private readonly ChannelWriter<RaceEvent> _channelWriter;
 	private readonly ILogger<OpenF1Worker> _logger;
 	private readonly F1SessionState _sessionState;
+	private readonly Dictionary<int, OpenF1Driver> _driverRegistry = [];
 
 	/// <summary>
 	/// Initializes a new instance of the OpenF1Worker class with the specified HTTP client factory, event channel, logger,
@@ -52,29 +53,27 @@ public class OpenF1Worker : BackgroundService {
 		string? lastStatus = null;
 		int? lastP1Driver = null;
 		string currentSessionName = "Unknown";
+		string lastSessionName = "Unknown";
 		bool isRace = false;
 
-		_logger.LogInformation("🏎️ OpenF1Worker mit P1-Logik gestartet.");
+		_logger.LogInformation("🏎️ OpenF1Worker with P1 logic started.");
 
 		while (!stoppingToken.IsCancellationRequested) {
 
 			if (!_sessionState.IsActive) {
-				_logger.LogInformation("💤 Standby. Warte auf START-Signal oder Timer...");
+				_logger.LogInformation("💤 Standby. Waiting for START signal or timer...");
 
-				// Hier passiert die Magie:
-				// Er wartet entweder bis jemand die Klingel drückt (Release)
-				// ODER bis 10 Minuten um sind (Timeout)
-				// ODER bis der Container gestoppt wird (stoppingToken)
+				// Here the magic happens:
+				// Waits either for a manual trigger (Release),
+				// OR until 10 minutes have passed (Timeout),
+				// OR until the container is stopped (stoppingToken).
 				await _sessionState.WakeUpSignal.WaitAsync(TimeSpan.FromMinutes(10), stoppingToken);
-
-				// Wenn wir hier ankommen, hat entweder jemand geklingelt oder die 10 Min sind um.
-				// Wir springen an den Anfang der Schleife und prüfen 'IsActive'.
 				continue;
 			}
 
 			if (_sessionState.IsDemoMode) {
 				await RunDemoSequence(stoppingToken);
-				continue; // Nach dem Skript fängt er wieder von vorne an, solange IsDemoMode an ist
+				continue;
 			}
 
 			try {
@@ -87,6 +86,7 @@ public class OpenF1Worker : BackgroundService {
 
 				if (session != null && session.Value.ValueKind != JsonValueKind.Undefined) {
 					currentSessionName = session.Value.GetProperty("session_name").GetString() ?? "Unknown";
+
 					// Check whether it is a real race or just practice/qualifying
 					isRace = currentSessionName.Contains("Race", StringComparison.OrdinalIgnoreCase);
 
@@ -97,26 +97,39 @@ public class OpenF1Worker : BackgroundService {
 						var dateEnd = endProp.GetDateTime();
 						var now = DateTime.UtcNow;
 
-						// Is the event live right now? (With a 30min buffer for after the race for the podium ceremony)
+						// Is the event live right now? (With a 30min buffer after the race for the podium ceremony)
 						isLive = now >= dateStart && now <= dateEnd.AddMinutes(30);
 
-						// Is the event old?? (Older than 24 hours)
+						// Is the event old? (Older than 24 hours)
 						isStale = (now - dateEnd).TotalHours > 24;
 					}
 				}
 
-				// If the data is old we stop processing!
+				// If the data is old, we stop processing to save resources!
 				if (isStale) {
-					_logger.LogDebug("Letzte Session ist älter als 24h. Ignoriere Daten.");
+					_logger.LogDebug("Last session is older than 24h. Ignoring data.");
 					await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
 					continue;
 				}
 
-				// 2. Track state (falsgs)
+				// 2. Maintain Driver Registry
+				// Clear the registry if the session changes (e.g., from Practice 1 to Practice 2)
+				if (currentSessionName != lastSessionName) {
+					_driverRegistry.Clear();
+					lastSessionName = currentSessionName;
+				}
+
+				// Fetch drivers if the registry is empty
+				if (_driverRegistry.Count == 0) {
+					await FetchDriverRegistryAsync(client, stoppingToken);
+				}
+
+				// 3. Track state (flags)
 				await CheckTrackStatus(client, stoppingToken, (s) => lastStatus = s, lastStatus);
 
-				// 3. Leader state
-				// OpenF1 returns for p1 always the "best" driver: In races the leader, in practice/qualifying the one with the fastest lap.
+				// 4. Leader state
+				// OpenF1 always returns the "best" driver for position=1: 
+				// In races it's the physical leader, in practice/quali the one with the fastest lap.
 				var posList = await client.GetFromJsonAsync<List<JsonElement>>("position?session_key=latest&position=1", stoppingToken);
 				var p1Data = posList?.LastOrDefault();
 
@@ -126,30 +139,62 @@ public class OpenF1Worker : BackgroundService {
 					if (driverNum != lastP1Driver) {
 						lastP1Driver = driverNum;
 
-						if (F1Registry.Drivers.TryGetValue(driverNum, out var driver)) {
-							var team = F1Registry.Teams[driver.TeamKey];
-
+						if (_driverRegistry.TryGetValue(driverNum, out var driver)) {
 							await PublishEvent("f1/race/p1", new {
-								driver = driver.Name,
+								driver = driver.FullName,
 								driver_number = driverNum,
-								short_name = driver.Abbreviation,
-								team = team.Name,
-								color = team.ColorHex,
+								short_name = driver.NameAcronym,
+								team = driver.TeamName,
+								color = driver.TeamColour,
 								reason = isRace ? "Race Leader" : "Fastest Lap",
 								session = currentSessionName,
 								is_live = isLive
 							});
 
-							_logger.LogWarning("🏆 P1 WECHSEL: {name} ({reason} in {session})",
-								driver.Name, isRace ? "Leader" : "Fastest Lap", currentSessionName);
+							_logger.LogWarning("🏆 P1 CHANGE: {name} ({reason} in {session})",
+								driver.FullName, isRace ? "Leader" : "Fastest Lap", currentSessionName);
+						} else {
+							_logger.LogWarning("Driver with number {Num} not found in the live registry!", driverNum);
 						}
 					}
 				}
 			} catch (Exception ex) {
-				_logger.LogError(ex, "Fehler beim Abruf der OpenF1 Daten");
+				_logger.LogError(ex, "Error fetching data from the OpenF1 API.");
 			}
 
 			await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+		}
+	}
+
+	/// <summary>
+	/// Fetches the current driver lineup dynamically from the OpenF1 API.
+	/// </summary>
+	private async Task FetchDriverRegistryAsync(HttpClient client, CancellationToken ct) {
+		try {
+			_logger.LogInformation("Fetching current driver lineup live from OpenF1 API...");
+
+			// We always fetch the drivers for the latest session
+			var drivers = await client.GetFromJsonAsync<List<OpenF1Driver>>("drivers?session_key=latest", ct);
+
+			if (drivers != null && drivers.Any()) {
+				_driverRegistry.Clear();
+				foreach (var d in drivers) {
+					// OpenF1 returns the color without '#'. We fix this directly for Home Assistant!
+					if (!string.IsNullOrEmpty(d.TeamColour) && !d.TeamColour.StartsWith("#")) {
+						d.TeamColour = $"#{d.TeamColour}";
+					}
+
+					// Fallback in case a color is missing from the API
+					if (string.IsNullOrEmpty(d.TeamColour)) {
+						d.TeamColour = "#FFFFFF";
+					}
+
+					_driverRegistry[d.DriverNumber] = d;
+				}
+				_logger.LogInformation("✅ Successfully loaded {Count} drivers into the registry.", _driverRegistry.Count);
+			}
+		} catch (Exception ex) {
+			_logger.LogError(ex, "Failed to load the driver registry. Will retry shortly.");
 		}
 	}
 
@@ -218,46 +263,46 @@ public class OpenF1Worker : BackgroundService {
 	/// <param name="ct">A cancellation token that can be used to cancel the demo sequence before completion.</param>
 	/// <returns>A task that represents the asynchronous operation of running the demo sequence.</returns>
 	private async Task RunDemoSequence(CancellationToken ct) {
-		_logger.LogInformation("🎬 Starte Demo-Rennen: Formation Lap...");
+		_logger.LogInformation("🎬 Starting demo race: Formation Lap...");
 		await Task.Delay(3000, ct);
 
-		_logger.LogInformation("🟢 Lights Out! Das Rennen läuft. Max Verstappen behält die Führung.");
+		_logger.LogInformation("🟢 Lights Out! The race is on. Max Verstappen retains the lead.");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
 		await PublishEvent("f1/race/p1", new { driver = "Max Verstappen", driver_number = 1, short_name = "VER", team = "Red Bull Racing", color = "#3671C6", reason = "Race Leader", session = "Race", is_live = true });
 		await Task.Delay(10000, ct);
 
-		_logger.LogInformation("🟡 Gelbe Flagge in Sektor 2! Jemand hat sich gedreht.");
+		_logger.LogInformation("🟡 Yellow flag in Sector 2! Someone spun.");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "YELLOW", MESSAGE = "Yellow in Sector 2" });
 		await Task.Delay(6000, ct);
 
-		_logger.LogInformation("🟢 Strecke wieder frei. Lando Norris greift an und überholt Verstappen!");
+		_logger.LogInformation("🟢 Track clear. Lando Norris attacks and overtakes Verstappen!");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
 		await PublishEvent("f1/race/p1", new { driver = "Lando Norris", driver_number = 4, short_name = "NOR", team = "McLaren", color = "#FF8000", reason = "Race Leader", session = "Race", is_live = true });
 		await Task.Delay(12000, ct);
 
-		_logger.LogInformation("🟠 Virtual Safety Car! Trümmerteile auf der Start-Ziel-Geraden.");
+		_logger.LogInformation("🟠 Virtual Safety Car! Debris on the main straight.");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "VSC", MESSAGE = "Virtual Safety Car Deployed" });
 		await Task.Delay(8000, ct);
 
-		_logger.LogInformation("🟢 VSC Ending. Rennen geht weiter.");
+		_logger.LogInformation("🟢 VSC ending. Race continues.");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
 		await Task.Delay(6000, ct);
 
-		_logger.LogInformation("🟡🟡 Schwerer Unfall! Safety Car kommt raus. Lewis Hamilton erbt P1 durch Boxenstopp-Chaos.");
+		_logger.LogInformation("🟡🟡 Heavy crash! Safety Car deployed. Lewis Hamilton inherits P1 due to pit stop chaos.");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "SC", MESSAGE = "Safety Car Deployed" });
 		await PublishEvent("f1/race/p1", new { driver = "Lewis Hamilton", driver_number = 44, short_name = "HAM", team = "Ferrari", color = "#ED1131", reason = "Race Leader", session = "Race", is_live = true });
 		await Task.Delay(12000, ct);
 
-		_logger.LogInformation("🔴 Rote Flagge! Das Rennen wird unterbrochen, um die Barriere zu reparieren.");
+		_logger.LogInformation("🔴 Red flag! The race is suspended to repair the barrier.");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "RED", MESSAGE = "Session Suspended" });
 		await Task.Delay(10000, ct);
 
-		_logger.LogInformation("🟢 Standing Start Restart! George Russell zieht im Mercedes an allen vorbei.");
+		_logger.LogInformation("🟢 Standing Start Restart! George Russell blasts past everyone in the Mercedes.");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
 		await PublishEvent("f1/race/p1", new { driver = "George Russell", driver_number = 63, short_name = "RUS", team = "Mercedes", color = "#27F4D2", reason = "Race Leader", session = "Race", is_live = true });
 		await Task.Delay(12000, ct);
 
-		_logger.LogInformation("🏁 Demo-Durchlauf beendet. Pause für 15 Sekunden, dann Neustart...");
+		_logger.LogInformation("🏁 Demo run finished. Pausing for 15 seconds, then restarting...");
 		await Task.Delay(15000, ct);
 	}
 
