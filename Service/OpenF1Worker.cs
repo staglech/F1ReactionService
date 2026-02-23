@@ -218,31 +218,47 @@ public class OpenF1Worker : BackgroundService {
 	/// <param name="ct">A cancellation token that can be used to cancel the demo sequence before completion.</param>
 	/// <returns>A task that represents the asynchronous operation of running the demo sequence.</returns>
 	private async Task RunDemoSequence(CancellationToken ct) {
-		_logger.LogInformation("🎬 Starte Demo-Szene 1: Rennstart (Grün & Red Bull führt)");
+		_logger.LogInformation("🎬 Starte Demo-Rennen: Formation Lap...");
+		await Task.Delay(3000, ct);
+
+		_logger.LogInformation("🟢 Lights Out! Das Rennen läuft. Max Verstappen behält die Führung.");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
-		await PublishEvent("f1/race/p1", new { driver = "Max Verstappen", driver_number = 1, short_name = "VER", team = "Red Bull Racing", color = "#4781D7", reason = "Race Leader", session = "Race", is_live = true });
-		await Task.Delay(8000, ct);
-
-		_logger.LogInformation("🎬 Starte Demo-Szene 2: Gelbe Flagge Sektor 2");
-		await PublishEvent("f1/race/flag_status", new { FLAG = "YELLOW", MESSAGE = "Yellow in Sector 2" });
-		await Task.Delay(5000, ct);
-
-		_logger.LogInformation("🎬 Starte Demo-Szene 3: Safety Car & McLaren übernimmt Führung");
-		await PublishEvent("f1/race/flag_status", new { FLAG = "SC", MESSAGE = "Safety Car Deployed" });
-		await PublishEvent("f1/race/p1", new { driver = "Lando Norris", driver_number = 4, short_name = "NOR", team = "McLaren", color = "#F47600", reason = "Race Leader", session = "Race", is_live = true });
-		await Task.Delay(8000, ct);
-
-		_logger.LogInformation("🎬 Starte Demo-Szene 4: Rote Flagge");
-		await PublishEvent("f1/race/flag_status", new { FLAG = "RED", MESSAGE = "Session Suspended" });
-		await Task.Delay(5000, ct);
-
-		_logger.LogInformation("🎬 Starte Demo-Szene 5: Restart & Ferrari führt");
-		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
-		await PublishEvent("f1/race/p1", new { driver = "Lewis Hamilton", driver_number = 44, short_name = "HAM", team = "Ferrari", color = "#ED1131", reason = "Race Leader", session = "Race", is_live = true });
-		await Task.Delay(8000, ct);
-
-		_logger.LogInformation("🏁 Demo-Durchlauf beendet. Pause für 10 Sekunden, dann Neustart...");
+		await PublishEvent("f1/race/p1", new { driver = "Max Verstappen", driver_number = 1, short_name = "VER", team = "Red Bull Racing", color = "#3671C6", reason = "Race Leader", session = "Race", is_live = true });
 		await Task.Delay(10000, ct);
+
+		_logger.LogInformation("🟡 Gelbe Flagge in Sektor 2! Jemand hat sich gedreht.");
+		await PublishEvent("f1/race/flag_status", new { FLAG = "YELLOW", MESSAGE = "Yellow in Sector 2" });
+		await Task.Delay(6000, ct);
+
+		_logger.LogInformation("🟢 Strecke wieder frei. Lando Norris greift an und überholt Verstappen!");
+		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
+		await PublishEvent("f1/race/p1", new { driver = "Lando Norris", driver_number = 4, short_name = "NOR", team = "McLaren", color = "#FF8000", reason = "Race Leader", session = "Race", is_live = true });
+		await Task.Delay(12000, ct);
+
+		_logger.LogInformation("🟠 Virtual Safety Car! Trümmerteile auf der Start-Ziel-Geraden.");
+		await PublishEvent("f1/race/flag_status", new { FLAG = "VSC", MESSAGE = "Virtual Safety Car Deployed" });
+		await Task.Delay(8000, ct);
+
+		_logger.LogInformation("🟢 VSC Ending. Rennen geht weiter.");
+		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
+		await Task.Delay(6000, ct);
+
+		_logger.LogInformation("🟡🟡 Schwerer Unfall! Safety Car kommt raus. Lewis Hamilton erbt P1 durch Boxenstopp-Chaos.");
+		await PublishEvent("f1/race/flag_status", new { FLAG = "SC", MESSAGE = "Safety Car Deployed" });
+		await PublishEvent("f1/race/p1", new { driver = "Lewis Hamilton", driver_number = 44, short_name = "HAM", team = "Ferrari", color = "#ED1131", reason = "Race Leader", session = "Race", is_live = true });
+		await Task.Delay(12000, ct);
+
+		_logger.LogInformation("🔴 Rote Flagge! Das Rennen wird unterbrochen, um die Barriere zu reparieren.");
+		await PublishEvent("f1/race/flag_status", new { FLAG = "RED", MESSAGE = "Session Suspended" });
+		await Task.Delay(10000, ct);
+
+		_logger.LogInformation("🟢 Standing Start Restart! George Russell zieht im Mercedes an allen vorbei.");
+		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
+		await PublishEvent("f1/race/p1", new { driver = "George Russell", driver_number = 63, short_name = "RUS", team = "Mercedes", color = "#27F4D2", reason = "Race Leader", session = "Race", is_live = true });
+		await Task.Delay(12000, ct);
+
+		_logger.LogInformation("🏁 Demo-Durchlauf beendet. Pause für 15 Sekunden, dann Neustart...");
+		await Task.Delay(15000, ct);
 	}
 
 	#endregion [ Demo data ]
