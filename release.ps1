@@ -9,7 +9,6 @@ if ([string]::IsNullOrWhiteSpace($version)) {
     exit
 }
 
-# NEU: Der korrekte Pfad relativ zur .sln
 $csprojPath = "Service\F1ReactionService.csproj"
 
 # Sicherheits-Check: Sind wir im richtigen Ordner?
@@ -30,7 +29,7 @@ Write-Host "✅ csproj wurde auf Version $version aktualisiert." -ForegroundColo
 Write-Host "📦 Erstelle Commit und Git-Tag v$version..." -ForegroundColor Yellow
 
 git add $csprojPath
-git commit -m "🔖 Release v$version"
+git commit -m "Release v$version"
 git tag "v$version"
 git push origin master
 git push origin "v$version"
