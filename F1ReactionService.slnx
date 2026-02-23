@@ -4,6 +4,8 @@
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".dockerignore" />
+    <File Path=".editorconfig" />
+    <File Path=".gitignore" />
     <File Path="Dockerfile" />
     <File Path="README.md" />
     <File Path="release.ps1" />
