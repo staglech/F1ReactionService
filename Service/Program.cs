@@ -1,8 +1,16 @@
 using F1ReactionService;
 using F1ReactionService.Model;
+using System.Reflection;
 using System.Threading.Channels;
 
 var builder = Host.CreateApplicationBuilder(args);
+
+builder.Logging.ClearProviders();
+
+builder.Logging.AddSimpleConsole(options => {
+	options.TimestampFormat = "[dd.MM.yyyy HH:mm:ss] ";
+	options.SingleLine = true;
+});
 
 builder.Services.AddHttpClient("OpenF1", client => {
 	client.BaseAddress = new Uri("https://api.openf1.org/v1/");
@@ -15,4 +23,12 @@ builder.Services.AddHostedService<OpenF1Worker>();
 builder.Services.AddHostedService<MqttWorker>();
 
 var host = builder.Build();
+
+var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "Unknown";
+var logger = host.Services.GetRequiredService<ILogger<Program>>();
+
+logger.LogInformation("=========================================");
+logger.LogInformation(" 🏎️ F1 REACTION SERVICE - VERSION {Version}", version);
+logger.LogInformation("=========================================");
+
 await host.RunAsync();
