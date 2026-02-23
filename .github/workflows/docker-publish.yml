@@ -2,7 +2,8 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [ "master" ] # Führt den Workflow aus, wenn du auf 'master' pushst
+    branches: [ "master" ]
+    tags: [ 'v*.*.*' ] # <-- WICHTIG: Reagiert jetzt auf Tags wie v1.0.0
 
 env:
   REGISTRY: ghcr.io
@@ -24,11 +25,22 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }} # Nutzt einen temporären Schlüssel für den Push
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # NEU: Generiert die Tags für das Docker Image vollautomatisch
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
