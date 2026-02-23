@@ -14,30 +14,23 @@ namespace F1ReactionService;
 /// idle until activated by a session state signal or a timeout. Designed for integration with systems that consume
 /// real-time Formula 1 telemetry or event data. Thread safety is managed internally, and the service is intended to run
 /// for the application's lifetime.</remarks>
-public class OpenF1Worker : BackgroundService {
-	private readonly IHttpClientFactory _httpClientFactory;
-	private readonly ChannelWriter<RaceEvent> _channelWriter;
-	private readonly ILogger<OpenF1Worker> _logger;
-	private readonly F1SessionState _sessionState;
+/// <remarks>
+/// Initializes a new instance of the OpenF1Worker class with the specified HTTP client factory, event channel, logger,
+/// and session state.
+/// </remarks>
+/// <param name="httpClientFactory">The factory used to create HTTP client instances for making external API requests. Cannot be null.</param>
+/// <param name="channel">The channel used to send RaceEvent messages for processing. Cannot be null.</param>
+/// <param name="logger">The logger used to record diagnostic and operational information. Cannot be null.</param>
+/// <param name="sessionState">The session state object that tracks the current Formula 1 session context. Cannot be null.</param>
+public class OpenF1Worker(IHttpClientFactory httpClientFactory,
+	Channel<RaceEvent> channel,
+	ILogger<OpenF1Worker> logger,
+	F1SessionState sessionState) : BackgroundService {
+	private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
+	private readonly ChannelWriter<RaceEvent> _channelWriter = channel.Writer;
+	private readonly ILogger<OpenF1Worker> _logger = logger;
+	private readonly F1SessionState _sessionState = sessionState;
 	private readonly Dictionary<int, OpenF1Driver> _driverRegistry = [];
-
-	/// <summary>
-	/// Initializes a new instance of the OpenF1Worker class with the specified HTTP client factory, event channel, logger,
-	/// and session state.
-	/// </summary>
-	/// <param name="httpClientFactory">The factory used to create HTTP client instances for making external API requests. Cannot be null.</param>
-	/// <param name="channel">The channel used to send RaceEvent messages for processing. Cannot be null.</param>
-	/// <param name="logger">The logger used to record diagnostic and operational information. Cannot be null.</param>
-	/// <param name="sessionState">The session state object that tracks the current Formula 1 session context. Cannot be null.</param>
-	public OpenF1Worker(IHttpClientFactory httpClientFactory,
-		Channel<RaceEvent> channel,
-		ILogger<OpenF1Worker> logger,
-		F1SessionState sessionState) {
-		_httpClientFactory = httpClientFactory;
-		_channelWriter = channel.Writer;
-		_logger = logger;
-		_sessionState = sessionState;
-	}
 
 	/// <summary>
 	/// Executes the background worker loop that monitors OpenF1 session state, retrieves session and leader information,
@@ -77,7 +70,7 @@ public class OpenF1Worker : BackgroundService {
 			}
 
 			try {
-				// 1. Get session info
+				// Get session info
 				var sessions = await client.GetFromJsonAsync<List<JsonElement>>("sessions?session_key=latest", stoppingToken);
 				var session = sessions?.LastOrDefault();
 
@@ -112,7 +105,7 @@ public class OpenF1Worker : BackgroundService {
 					continue;
 				}
 
-				// 2. Maintain Driver Registry
+				// Maintain Driver Registry
 				// Clear the registry if the session changes (e.g., from Practice 1 to Practice 2)
 				if (currentSessionName != lastSessionName) {
 					_driverRegistry.Clear();
@@ -124,10 +117,10 @@ public class OpenF1Worker : BackgroundService {
 					await FetchDriverRegistryAsync(client, stoppingToken);
 				}
 
-				// 3. Track state (flags)
-				await CheckTrackStatus(client, stoppingToken, (s) => lastStatus = s, lastStatus);
+				// Track state (flags)
+				await CheckTrackStatus(client, (s) => lastStatus = s, lastStatus, stoppingToken);
 
-				// 4. Leader state
+				// Leader state
 				// OpenF1 always returns the "best" driver for position=1: 
 				// In races it's the physical leader, in practice/quali the one with the fastest lap.
 				var posList = await client.GetFromJsonAsync<List<JsonElement>>("position?session_key=latest&position=1", stoppingToken);
@@ -151,7 +144,7 @@ public class OpenF1Worker : BackgroundService {
 								is_live = isLive
 							});
 
-							_logger.LogWarning("🏆 P1 CHANGE: {name} ({reason} in {session})",
+							_logger.LogWarning("🏆 P1 CHANGE: {Name} ({Reason} in {Session})",
 								driver.FullName, isRace ? "Leader" : "Fastest Lap", currentSessionName);
 						} else {
 							_logger.LogWarning("Driver with number {Num} not found in the live registry!", driverNum);
@@ -176,11 +169,11 @@ public class OpenF1Worker : BackgroundService {
 			// We always fetch the drivers for the latest session
 			var drivers = await client.GetFromJsonAsync<List<OpenF1Driver>>("drivers?session_key=latest", ct);
 
-			if (drivers != null && drivers.Any()) {
+			if (drivers != null && drivers.Count != 0) {
 				_driverRegistry.Clear();
 				foreach (var d in drivers) {
 					// OpenF1 returns the color without '#'. We fix this directly for Home Assistant!
-					if (!string.IsNullOrEmpty(d.TeamColour) && !d.TeamColour.StartsWith("#")) {
+					if (!string.IsNullOrEmpty(d.TeamColour) && !d.TeamColour.StartsWith('#')) {
 						d.TeamColour = $"#{d.TeamColour}";
 					}
 
@@ -204,11 +197,11 @@ public class OpenF1Worker : BackgroundService {
 	/// <remarks>If the track status has changed since the last check, this method updates the status and publishes
 	/// a flag status event. The method does not publish an event if the status is unchanged or unavailable.</remarks>
 	/// <param name="client">The HTTP client used to retrieve the latest track status from the remote service.</param>
-	/// <param name="ct">A cancellation token that can be used to cancel the asynchronous operation.</param>
 	/// <param name="setLastStatus">An action to update the last known status when a change is detected.</param>
 	/// <param name="lastStatus">The previously recorded track status, or null if no status has been recorded.</param>
+	/// <param name="ct">A cancellation token that can be used to cancel the asynchronous operation.</param>
 	/// <returns>A task that represents the asynchronous operation.</returns>
-	private async Task CheckTrackStatus(HttpClient client, CancellationToken ct, Action<string> setLastStatus, string? lastStatus) {
+	private async Task CheckTrackStatus(HttpClient client, Action<string> setLastStatus, string? lastStatus, CancellationToken ct) {
 		var statusList = await client.GetFromJsonAsync<List<JsonElement>>("track_status?session_key=latest", ct);
 		var current = statusList?.LastOrDefault();
 		if (current != null && current.Value.ValueKind != JsonValueKind.Undefined) {

@@ -55,14 +55,12 @@ public class MqttWorker : BackgroundService {
 	/// terminate when cancellation is requested.</param>
 	/// <returns>A task that represents the asynchronous execution of the background operation.</returns>
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-		// 1. Config laden
-		var server = _config["MQTT_SERVER"] ?? "10.10.10.89";
+		var server = _config["MQTT_SERVER"] ?? "";
 		var portString = _config["MQTT_PORT"] ?? "1883";
 		var user = _config["MQTT_USER"];
 		var pass = _config["MQTT_PASSWORD"];
-		int.TryParse(portString, out var port);
+		_ = int.TryParse(portString, out var port);
 
-		// 2. Client Optionen bauen (inkl. Auth)
 		var mqttOptionsBuilder = new MqttClientOptionsBuilder()
 			.WithTcpServer(server, port)
 			.WithCleanSession();
@@ -73,9 +71,7 @@ public class MqttWorker : BackgroundService {
 
 		var mqttOptions = mqttOptionsBuilder.Build();
 
-		// 3. Handler für Kalibrierung (Command-Topic)
 		_mqttClient.ApplicationMessageReceivedAsync += async e => {
-			// Korrekte Art, den Payload in MQTTnet 4.x zu lesen:
 			var payloadBytes = e.ApplicationMessage.Payload;
 			var command = !payloadBytes.IsEmpty ? Encoding.UTF8.GetString(payloadBytes) : string.Empty;
 
@@ -86,13 +82,13 @@ public class MqttWorker : BackgroundService {
 					if (_sessionState.WakeUpSignal.CurrentCount == 0) {
 						_sessionState.WakeUpSignal.Release();
 					}
-					_logger.LogWarning("🚀 F1-Dienst AUFGEWACHT! Starte Polling...");
+					_logger.LogWarning("🚀 F1-service awake! Start polling...");
 					break;
 
 				case "DEMO_START":
 					_sessionState.IsDemoMode = true;
 					_sessionState.IsActive = true;
-					_logger.LogWarning("🎪 DEMO-MODUS GESTARTET! Spiele Test-Skript ab...");
+					_logger.LogWarning("🎪 STARTED DEMO-MODE! Running demo script...");
 					if (_sessionState.WakeUpSignal.CurrentCount == 0) {
 						_sessionState.WakeUpSignal.Release();
 					}
@@ -102,28 +98,26 @@ public class MqttWorker : BackgroundService {
 				case "STOP":
 					_sessionState.IsDemoMode = false;
 					_sessionState.IsActive = false;
-					_sessionState.TrueDataStartTime = null; // Reset für nächstes Mal
-					_logger.LogWarning("💤 F1-Dienst geht in den STANDBY.");
+					_sessionState.TrueDataStartTime = null;
+					_logger.LogWarning("💤 F1-service moves to STANDBY.");
 					break;
 
 				case "CALIBRATE_START":
 					if (_sessionState.TrueDataStartTime.HasValue) {
 						_sessionState.CurrentDelay = DateTime.UtcNow - _sessionState.TrueDataStartTime.Value;
-						_logger.LogWarning("⏱️ KALIBRIERT: Delay auf {s}s gesetzt.", _sessionState.CurrentDelay.TotalSeconds);
+						_logger.LogWarning("⏱️ CALIBRATE: Delay set to {S}s.", _sessionState.CurrentDelay.TotalSeconds);
 					}
 					break;
 			}
 			await Task.CompletedTask;
 		};
 
-		// 4. Verbindung herstellen & Abo starten
-		_logger.LogInformation("🌐 MqttWorker verbindet zu {server}:{port}...", server, port);
+		// Create connection and start the subscription
+		_logger.LogInformation("🌐 MqttWorker will connect to {Server}:{Port}...", server, port);
 		await _mqttClient.ConnectAsync(mqttOptions, stoppingToken);
 		await _mqttClient.SubscribeAsync("f1/service/command", cancellationToken: stoppingToken);
 
-		// 5. Channel-Schleife
 		await foreach (var raceEvent in _channelReader.ReadAllAsync(stoppingToken)) {
-			// Wir nutzen Task.Run, damit der Delay eines Pakets nicht das nächste blockiert
 			_ = Task.Run(async () => {
 				if (_sessionState.CurrentDelay > TimeSpan.Zero) {
 					await Task.Delay(_sessionState.CurrentDelay, stoppingToken);
@@ -136,7 +130,7 @@ public class MqttWorker : BackgroundService {
 						.Build();
 
 					await _mqttClient.PublishAsync(message, stoppingToken);
-					_logger.LogInformation("📤 MQTT gesendet ({delay}s Verzögerung): {topic}",
+					_logger.LogInformation("📤 MQTT sends ({Delay}s delay): {Topic}",
 						_sessionState.CurrentDelay.TotalSeconds, raceEvent.Topic);
 				}
 			}, stoppingToken);
