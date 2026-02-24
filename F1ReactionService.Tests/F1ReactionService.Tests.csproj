@@ -17,7 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Service\F1ReactionService.csproj" />
+    <ProjectReference Include="..\F1ReactionService\F1ReactionService.csproj" />
   </ItemGroup>
 
   <ItemGroup>

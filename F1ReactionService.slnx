@@ -8,5 +8,5 @@
     <File Path="release.ps1" />
   </Folder>
   <Project Path="F1ReactionService.Tests/F1ReactionService.Tests.csproj" />
-  <Project Path="Service/F1ReactionService.csproj" />
+  <Project Path="F1ReactionService/F1ReactionService.csproj" />
 </Solution>

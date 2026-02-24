@@ -8,7 +8,7 @@ if ([string]::IsNullOrWhiteSpace($version)) {
     exit
 }
 
-$csprojPath = "F1ReactionService.csproj"
+$csprojPath = "F1ReactionService\F1ReactionService.csproj"
 
 # Security check
 if (-Not (Test-Path $csprojPath)) {
