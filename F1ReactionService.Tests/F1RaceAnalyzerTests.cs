@@ -19,7 +19,7 @@ public class F1RaceAnalyzerTests {
 		// Assert
 		result.Should().NotBeNull();
 		result!.Topic.Should().Be("f1/race/flag_status");
-		result.Payload.Should().Contain("\"FLAG\":\"RED\"");
+		result.Payload.Should().Contain("\"flag\":\"RED\"");
 	}
 
 	[Fact]

@@ -35,6 +35,7 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 		var analyzer = new F1RaceAnalyzer();
 
 		SessionInfo currentSessionInfo = new();
+		DemoHttpMessageHandler? demoHandler = null;
 
 		_logger.LogInformation("🏎️ OpenF1Worker started.");
 
@@ -42,17 +43,21 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 			if (!_sessionState.IsActive) {
 				_logger.LogInformation("💤 Standby. Waiting for START signal or timer...");
 				currentSessionInfo = new SessionInfo();
+				demoHandler = null;
 				await _sessionState.WakeUpSignal.WaitAsync(TimeSpan.FromMinutes(10), stoppingToken);
 				continue;
 			}
 
-			if (_sessionState.IsDemoMode) {
-				await RunDemoSequence(stoppingToken);
-				continue;
-			}
-
 			try {
-				var client = _httpClientFactory.CreateClient("OpenF1");
+				HttpClient client;
+				if (_sessionState.IsDemoMode) {
+					demoHandler ??= new DemoHttpMessageHandler(_sessionState);
+					client = new HttpClient(demoHandler) { BaseAddress = new Uri("https://api.openf1.org/v1/") };
+				} else {
+					demoHandler = null;
+					client = _httpClientFactory.CreateClient("OpenF1");
+				}
+
 				// update session info
 				await UpdateSessionInfo(client, currentSessionInfo, stoppingToken);
 
@@ -175,73 +180,4 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 		}
 	}
 
-	#region [ Demo data ]
-
-	/// <summary>
-	/// Publishes an event with the specified topic and payload to the event channel asynchronously.
-	/// </summary>
-	/// <remarks>The event is serialized to JSON before being written to the channel. This method does not guarantee
-	/// immediate delivery; the event is queued for processing.</remarks>
-	/// <param name="topic">The topic name that categorizes the event. Cannot be null or empty.</param>
-	/// <param name="payload">The event data to be published. The object will be serialized to JSON before publishing. Cannot be null.</param>
-	/// <returns>A task that represents the asynchronous publish operation.</returns>
-	private async Task PublishEvent(string topic, object payload) {
-		var json = JsonSerializer.Serialize(payload);
-		await _channelWriter.WriteAsync(new RaceEvent(topic, json));
-	}
-
-	/// <summary>
-	/// Runs a demonstration sequence that simulates a series of race events by publishing status updates and delays
-	/// between scenes.
-	/// </summary>
-	/// <remarks>This method is intended for demonstration or testing purposes and simulates race scenarios by
-	/// publishing events and introducing delays. The sequence can be interrupted by cancelling the provided
-	/// token.</remarks>
-	/// <param name="ct">A cancellation token that can be used to cancel the demo sequence before completion.</param>
-	/// <returns>A task that represents the asynchronous operation of running the demo sequence.</returns>
-	private async Task RunDemoSequence(CancellationToken ct) {
-		_logger.LogInformation("🎬 Starting demo race: Formation Lap...");
-		await Task.Delay(3000, ct);
-
-		_logger.LogInformation("🟢 Lights Out! The race is on. Max Verstappen retains the lead.");
-		await PublishEvent("f1/race/flag_status", new { flag = "GREEN", message = "Track Clear" });
-		await PublishEvent("f1/race/p1", new { driver = "Max Verstappen", driver_number = 33, short_name = "VER", team = "Red Bull Racing", color = "#3671C6", reason = "Race Leader", session = "Race", is_live = true });
-		await Task.Delay(10000, ct);
-
-		_logger.LogInformation("🟡 Yellow flag in Sector 2! Someone spun.");
-		await PublishEvent("f1/race/flag_status", new { flag = "YELLOW", message = "Yellow in Sector 2" });
-		await Task.Delay(6000, ct);
-
-		_logger.LogInformation("🟢 Track clear. Lando Norris attacks and overtakes Verstappen!");
-		await PublishEvent("f1/race/flag_status", new { flag = "GREEN", message = "Track Clear" });
-		await PublishEvent("f1/race/p1", new { driver = "Lando Norris", driver_number = 1, short_name = "NOR", team = "McLaren", color = "#FF8000", reason = "Race Leader", session = "Race", is_live = true });
-		await Task.Delay(12000, ct);
-
-		_logger.LogInformation("🟠 Virtual Safety Car! Debris on the main straight.");
-		await PublishEvent("f1/race/flag_status", new { flag = "VSC", message = "Virtual Safety Car Deployed" });
-		await Task.Delay(8000, ct);
-
-		_logger.LogInformation("🟢 VSC ending. Race continues.");
-		await PublishEvent("f1/race/flag_status", new { flag = "GREEN", message = "Track Clear" });
-		await Task.Delay(6000, ct);
-
-		_logger.LogInformation("🟡🟡 Heavy crash! Safety Car deployed. Lewis Hamilton inherits P1 due to pit stop chaos.");
-		await PublishEvent("f1/race/flag_status", new { flag = "SC", message = "Safety Car Deployed" });
-		await PublishEvent("f1/race/p1", new { driver = "Lewis Hamilton", driver_number = 44, short_name = "HAM", team = "Ferrari", color = "#ED1131", reason = "Race Leader", session = "Race", is_live = true });
-		await Task.Delay(12000, ct);
-
-		_logger.LogInformation("🔴 Red flag! The race is suspended to repair the barrier.");
-		await PublishEvent("f1/race/flag_status", new { flag = "RED", message = "Session Suspended" });
-		await Task.Delay(10000, ct);
-
-		_logger.LogInformation("🟢 Standing Start Restart! George Russell blasts past everyone in the Mercedes.");
-		await PublishEvent("f1/race/flag_status", new { flag = "GREEN", message = "Track Clear" });
-		await PublishEvent("f1/race/p1", new { driver = "George Russell", driver_number = 63, short_name = "RUS", team = "Mercedes", color = "#27F4D2", reason = "Race Leader", session = "Race", is_live = true });
-		await Task.Delay(12000, ct);
-
-		_logger.LogInformation("🏁 Demo run finished. Pausing for 15 seconds, then restarting...");
-		await Task.Delay(15000, ct);
-	}
-
-	#endregion [ Demo data ]
 }

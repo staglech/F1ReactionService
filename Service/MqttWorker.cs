@@ -132,6 +132,11 @@ public class MqttWorker : BackgroundService {
 					await _mqttClient.PublishAsync(message, stoppingToken);
 					_logger.LogInformation("📤 MQTT sends ({Delay}s delay): {Topic}",
 						_sessionState.CurrentDelay.TotalSeconds, raceEvent.Topic);
+
+					if (_sessionState.IsDemoMode) {
+						_logger.LogInformation("Sent: {Payload}",
+						raceEvent.Payload);
+					}
 				}
 			}, stoppingToken);
 		}
