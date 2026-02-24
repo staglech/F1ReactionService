@@ -39,57 +39,65 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 
 		_logger.LogInformation("🏎️ OpenF1Worker started.");
 
-		while (!stoppingToken.IsCancellationRequested) {
-			if (!_sessionState.IsActive) {
-				_logger.LogInformation("💤 Standby. Waiting for START signal or timer...");
-				analyzer.Reset();
-				currentSessionInfo = new SessionInfo();
-				demoHandler = null;
-				await _sessionState.WakeUpSignal.WaitAsync(TimeSpan.FromMinutes(10), stoppingToken);
-				continue;
-			}
-
-			try {
-				HttpClient client;
-				if (_sessionState.IsDemoMode) {
-					demoHandler ??= new DemoHttpMessageHandler(_sessionState);
-					client = new HttpClient(demoHandler) { BaseAddress = new Uri("https://api.openf1.org/v1/") };
-				} else {
+		try {
+			while (!stoppingToken.IsCancellationRequested) {
+				if (!_sessionState.IsActive) {
+					_logger.LogInformation("💤 Standby. Waiting for START signal or timer...");
+					analyzer.Reset();
+					currentSessionInfo = new SessionInfo();
 					demoHandler = null;
-					client = _httpClientFactory.CreateClient("OpenF1");
-				}
-
-				// update session info
-				await UpdateSessionInfo(client, currentSessionInfo, stoppingToken);
-
-				if (currentSessionInfo.IsStale) {
-					_logger.LogDebug("Last session is older than 24h. Ignoring data.");
-					await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+					await _sessionState.WakeUpSignal.WaitAsync(TimeSpan.FromMinutes(10), stoppingToken);
 					continue;
 				}
 
-				// update driver registry if needed
-				await CheckDriverRegistry(analyzer, currentSessionInfo, client, stoppingToken);
+				try {
+					HttpClient client;
+					if (_sessionState.IsDemoMode) {
+						demoHandler ??= new DemoHttpMessageHandler(_sessionState);
+						client = new HttpClient(demoHandler) { BaseAddress = new Uri("https://api.openf1.org/v1/") };
+					} else {
+						demoHandler = null;
+						client = _httpClientFactory.CreateClient("OpenF1");
+					}
 
-				// check track status
-				await CheckTrackStatusAsync(client, analyzer, stoppingToken);
+					// update session info
+					await UpdateSessionInfo(client, currentSessionInfo, stoppingToken);
 
-				// check for leader chagne
-				await CheckLeaderAsync(client, analyzer, currentSessionInfo, stoppingToken);
+					if (currentSessionInfo.IsStale) {
+						_logger.LogDebug("Last session is older than 24h. Ignoring data.");
+						await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+						continue;
+					}
 
-				// check weather for rain
-				await CheckWeatherAsync(client, analyzer, stoppingToken);
+					// update driver registry if needed
+					await CheckDriverRegistry(analyzer, currentSessionInfo, client, stoppingToken);
 
-				// Check for Tracked Drivers
-				await CheckIntervalsAsync(client, analyzer, stoppingToken);
-				await CheckPitStopsAsync(client, analyzer, stoppingToken);
-				await CheckRaceControlDriverEventsAsync(client, analyzer, stoppingToken);
+					// check track status
+					await CheckTrackStatusAsync(client, analyzer, stoppingToken);
 
-			} catch (Exception ex) {
-				_logger.LogError(ex, "Error fetching data from the OpenF1 API.");
+					// check for leader chagne
+					await CheckLeaderAsync(client, analyzer, currentSessionInfo, stoppingToken);
+
+					// check weather for rain
+					await CheckWeatherAsync(client, analyzer, stoppingToken);
+
+					// Check for Tracked Drivers
+					await CheckIntervalsAsync(client, analyzer, stoppingToken);
+					await CheckPitStopsAsync(client, analyzer, stoppingToken);
+					await CheckRaceControlDriverEventsAsync(client, analyzer, stoppingToken);
+
+				} catch (Exception ex) {
+					_logger.LogError(ex, "Error fetching data from the OpenF1 API.");
+				}
+
+				await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 			}
-
-			await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+		} catch (OperationCanceledException) {
+			// Will be thrown when the stopoingToken is triggered by Ctrl+C or the container-stop.
+			// This is expected behavior - that is why we simply log an info message.
+			_logger.LogInformation("🛑 OpenF1Worker is shutting down gracefully...");
+		} catch (Exception ex) {
+			_logger.LogCritical(ex, "💥 OpenF1Worker encountered a fatal error and stopped.");
 		}
 	}
 
