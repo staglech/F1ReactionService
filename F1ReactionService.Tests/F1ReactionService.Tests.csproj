@@ -17,11 +17,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Using Include="Xunit" />
+    <ProjectReference Include="..\Service\F1ReactionService.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Service\F1ReactionService.csproj" />
+    <Using Include="Xunit" />
   </ItemGroup>
 
 </Project>
