@@ -4,34 +4,34 @@ Write-Host "=== F1 Reaction Service - Release Manager ===" -ForegroundColor Cyan
 $version = Read-Host "Welche Version willst du releasen? (z.B. 0.1.5)"
 
 if ([string]::IsNullOrWhiteSpace($version)) {
-    Write-Host "Keine Version eingegeben. Abbruch!" -ForegroundColor Red
+    Write-Host "No version provided. Abort!" -ForegroundColor Red
     exit
 }
 
 $csprojPath = "Service\F1ReactionService.csproj"
 
-# Sicherheits-Check
+# Security check
 if (-Not (Test-Path $csprojPath)) {
-    Write-Host "Fehler: Konnte $csprojPath nicht finden." -ForegroundColor Red
+    Write-Host "Error: Could not finde $csprojPath." -ForegroundColor Red
     exit
 }
 
-# --- NEU: Das Sicherheitsnetz (Unit Tests) ---
-Write-Host "🧪 Führe Unit Tests aus..." -ForegroundColor Yellow
 
-# Startet die Tests (mit minimaler Ausgabe, damit die Konsole übersichtlich bleibt)
+Write-Host "Executing unit tests..." -ForegroundColor Yellow
+
+# Execute the unit tests
 dotnet test -v m
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ OH NEIN! Die Tests sind fehlgeschlagen." -ForegroundColor Red
-    Write-Host "Das Release wurde sicherheitshalber abgebrochen. Es wurde NICHTS zu GitHub gepusht." -ForegroundColor Red
+    Write-Host "Oops! Unit tests failed." -ForegroundColor Red
+    Write-Host "Cancelled release. Nothing has been pushed." -ForegroundColor Red
     exit
 }
 
-Write-Host "✅ Alle Tests bestanden! Freigabe erteilt." -ForegroundColor Green
+Write-Host "All tests green! Releasing..." -ForegroundColor Green
 # ---------------------------------------------
 
-# 2. csproj-Datei aktualisieren (kugelsicher)
+# update csproj file
 $content = Get-Content $csprojPath -Raw
 
 if ($content -match "<Version>.*</Version>") {
@@ -42,10 +42,10 @@ if ($content -match "<Version>.*</Version>") {
 
 [System.IO.File]::WriteAllText("$PWD\$csprojPath", $content)
 
-Write-Host "-> csproj wurde auf Version $version aktualisiert." -ForegroundColor Green
+Write-Host "-> csproj has been updated to version $version." -ForegroundColor Green
 
-# 3. Git-Magie (Commit, Tag, Push)
-Write-Host "-> Erstelle Commit und Git-Tag v$version..." -ForegroundColor Yellow
+# Commit, Tag, Push
+Write-Host "-> Create commit and git tag v$version..." -ForegroundColor Yellow
 
 git add $csprojPath
 git commit -m "Release v$version"
@@ -54,5 +54,5 @@ git push origin master
 git push origin "v$version"
 
 Write-Host "=============================================" -ForegroundColor Cyan
-Write-Host "🚀 ERFOLG! Version v$version wurde gestempelt und gepusht!" -ForegroundColor Green
-Write-Host "GitHub baut jetzt im Hintergrund dein Docker-Image." -ForegroundColor Gray
+Write-Host "Success! Version v$version tagged and pusehd!" -ForegroundColor Green
+Write-Host "GitHub will create a new docker image." -ForegroundColor Gray

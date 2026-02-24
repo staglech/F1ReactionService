@@ -205,7 +205,7 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 
 		_logger.LogInformation("🟢 Lights Out! The race is on. Max Verstappen retains the lead.");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
-		await PublishEvent("f1/race/p1", new { driver = "Max Verstappen", driver_number = 1, short_name = "VER", team = "Red Bull Racing", color = "#3671C6", reason = "Race Leader", session = "Race", is_live = true });
+		await PublishEvent("f1/race/p1", new { driver = "Max Verstappen", driver_number = 33, short_name = "VER", team = "Red Bull Racing", color = "#3671C6", reason = "Race Leader", session = "Race", is_live = true });
 		await Task.Delay(10000, ct);
 
 		_logger.LogInformation("🟡 Yellow flag in Sector 2! Someone spun.");
@@ -214,7 +214,7 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 
 		_logger.LogInformation("🟢 Track clear. Lando Norris attacks and overtakes Verstappen!");
 		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
-		await PublishEvent("f1/race/p1", new { driver = "Lando Norris", driver_number = 4, short_name = "NOR", team = "McLaren", color = "#FF8000", reason = "Race Leader", session = "Race", is_live = true });
+		await PublishEvent("f1/race/p1", new { driver = "Lando Norris", driver_number = 1, short_name = "NOR", team = "McLaren", color = "#FF8000", reason = "Race Leader", session = "Race", is_live = true });
 		await Task.Delay(12000, ct);
 
 		_logger.LogInformation("🟠 Virtual Safety Car! Debris on the main straight.");
