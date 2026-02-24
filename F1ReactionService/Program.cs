@@ -17,6 +17,7 @@ builder.Services.AddHttpClient("OpenF1", client => {
 });
 
 builder.Services.AddSingleton<F1SessionState>();
+builder.Services.AddSingleton<IMqttCommandProcessor, MqttCommandProcessor>();
 builder.Services.AddSingleton(Channel.CreateUnbounded<RaceEvent>());
 
 builder.Services.AddHostedService<OpenF1Worker>();

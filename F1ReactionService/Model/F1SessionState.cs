@@ -1,4 +1,6 @@
-﻿namespace F1ReactionService.Model;
+﻿using System.Collections.Concurrent;
+
+namespace F1ReactionService.Model;
 
 /// <summary>
 /// Represents the current state of an F1 session, including timing, delay, activity status, and synchronization
@@ -35,4 +37,12 @@ public class F1SessionState {
 	/// initial count is zero, so threads calling Wait will block until a release occurs. The maximum count is one, making
 	/// it suitable for single wake-up notifications.</remarks>
 	public SemaphoreSlim WakeUpSignal { get; } = new SemaphoreSlim(0, 1);
+
+	/// <summary>
+	/// Gets the collection of driver identifiers that are currently being tracked.
+	/// </summary>
+	/// <remarks>This property provides thread-safe access to the set of tracked drivers. The dictionary keys
+	/// represent driver IDs, and the associated boolean values indicate whether each driver is actively tracked. The
+	/// collection is intended for concurrent use in multi-threaded scenarios.</remarks>
+	public ConcurrentDictionary<int, bool> TrackedDrivers { get; } = new();
 }
