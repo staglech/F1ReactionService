@@ -4,12 +4,12 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Zuerst nur die Projektdatei kopieren, um Layer-Caching zu nutzen
-COPY ["Service/F1ReactionService.csproj", "Service/"]
-RUN dotnet restore "Service/F1ReactionService.csproj"
+COPY ["F1ReactionService/F1ReactionService.csproj", "F1ReactionService/"]
+RUN dotnet restore "F1ReactionService/F1ReactionService.csproj"
 
 # Den Rest kopieren und das Projekt bauen
 COPY . .
-WORKDIR "/src/Service"
+WORKDIR "/src/F1ReactionService"
 RUN dotnet publish "F1ReactionService.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
 # --- STAGE 2: Runtime (Ausführen) ---
