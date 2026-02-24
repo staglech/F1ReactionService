@@ -82,33 +82,48 @@ public class MqttWorker : BackgroundService {
 			await Task.CompletedTask;
 		};
 
-		// Create connection and start the subscription
-		_logger.LogInformation("🌐 MqttWorker will connect to {Server}:{Port}...", server, port);
-		await _mqttClient.ConnectAsync(mqttOptions, stoppingToken);
-		await _mqttClient.SubscribeAsync("f1/service/command", cancellationToken: stoppingToken);
+		try {
+			// Create connection and start the subscription
+			_logger.LogInformation("🌐 MqttWorker will connect to {Server}:{Port}...", server, port);
+			await _mqttClient.ConnectAsync(mqttOptions, stoppingToken);
+			await _mqttClient.SubscribeAsync("f1/service/command", cancellationToken: stoppingToken);
 
-		await foreach (var raceEvent in _channelReader.ReadAllAsync(stoppingToken)) {
-			_ = Task.Run(async () => {
-				if (_sessionState.CurrentDelay > TimeSpan.Zero) {
-					await Task.Delay(_sessionState.CurrentDelay, stoppingToken);
-				}
-
-				if (_mqttClient.IsConnected) {
-					var message = new MqttApplicationMessageBuilder()
-						.WithTopic(raceEvent.Topic)
-						.WithPayload(raceEvent.Payload)
-						.Build();
-
-					await _mqttClient.PublishAsync(message, stoppingToken);
-					_logger.LogInformation("📤 MQTT sends ({Delay}s delay): {Topic}",
-						_sessionState.CurrentDelay.TotalSeconds, raceEvent.Topic);
-
-					if (_sessionState.IsDemoMode) {
-						_logger.LogInformation("Sent: {Payload}",
-						raceEvent.Payload);
+			await foreach (var raceEvent in _channelReader.ReadAllAsync(stoppingToken)) {
+				_ = Task.Run(async () => {
+					if (_sessionState.CurrentDelay > TimeSpan.Zero) {
+						await Task.Delay(_sessionState.CurrentDelay, stoppingToken);
 					}
-				}
-			}, stoppingToken);
+
+					if (_mqttClient.IsConnected) {
+						var message = new MqttApplicationMessageBuilder()
+							.WithTopic(raceEvent.Topic)
+							.WithPayload(raceEvent.Payload)
+							.Build();
+
+						await _mqttClient.PublishAsync(message, stoppingToken);
+						_logger.LogInformation("📤 MQTT sends ({Delay}s delay): {Topic}",
+							_sessionState.CurrentDelay.TotalSeconds, raceEvent.Topic);
+
+						if (_sessionState.IsDemoMode) {
+							_logger.LogInformation("Sent: {Payload}",
+							raceEvent.Payload);
+						}
+					}
+				}, stoppingToken);
+			}
+		} catch (OperationCanceledException) {
+			// Will be thrown when the stopoingToken is triggered by Ctrl+C or the container-stop.
+			// This is expected behavior - that is why we simply log an info message.
+			_logger.LogInformation("🛑 MqttWorker is shutting down gracefully...");
+		} catch (Exception ex) {
+			_logger.LogError(ex, "❌ MqttWorker encountered an unexpected error.");
+		} finally {
+			// Clean disconnect in case we are still connected.
+			if (_mqttClient != null && _mqttClient.IsConnected) {
+				await _mqttClient.DisconnectAsync(new MqttClientDisconnectOptionsBuilder()
+					.WithReason(MqttClientDisconnectOptionsReason.NormalDisconnection)
+					.Build());
+			}
 		}
 	}
 
