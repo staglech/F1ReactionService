@@ -143,11 +143,8 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 	/// <returns>A task that represents the asynchronous operation.</returns>
 	private async Task CheckTrackStatusAsync(HttpClient client, F1RaceAnalyzer analyzer, CancellationToken stoppingToken) {
 		var statusList = await client.GetFromJsonAsync<List<JsonElement>>("track_status?session_key=latest", stoppingToken);
-
-		// Das Gehirn (Analyzer) macht die Arbeit
 		var flagEvent = analyzer.ProcessTrackStatus(statusList?.LastOrDefault());
 
-		// Wenn was passiert ist, feuert der Muskel (Worker) es raus
 		if (flagEvent != null) {
 			await _channelWriter.WriteAsync(flagEvent, stoppingToken);
 			_logger.LogInformation("🏁 FLAG CHANGE detected and published.");
