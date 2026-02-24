@@ -5,8 +5,6 @@ using System.Threading.Channels;
 
 namespace F1ReactionService;
 
-
-
 /// <summary>
 /// Provides a background service that monitors Formula 1 session data from the OpenF1 API and publishes race events
 /// such as leader changes and track status updates to a channel for downstream processing.
