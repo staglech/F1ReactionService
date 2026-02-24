@@ -1,4 +1,4 @@
-﻿namespace F1ReactionService;
+﻿namespace F1ReactionService.Model;
 
 /// <summary>
 /// Represents the current state of an F1 session, including timing, delay, activity status, and synchronization

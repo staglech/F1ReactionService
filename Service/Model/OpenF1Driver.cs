@@ -34,9 +34,21 @@ public class OpenF1Driver {
 	[JsonPropertyName("team_name")]
 	public string TeamName { get; set; }
 
+	private string _teamColour = string.Empty;
 	/// <summary>
 	/// Gets or sets the team color associated with the entity.
 	/// </summary>
 	[JsonPropertyName("team_colour")]
-	public string TeamColour { get; set; }
+	public string TeamColour {
+		get => _teamColour;
+		set {
+			if (string.IsNullOrWhiteSpace(value)) {
+				_teamColour = "#FFFFFF"; // Fallback für fehlende Farben
+			} else if (!value.StartsWith('#')) {
+				_teamColour = $"#{value}"; // '#' automatisch ergänzen
+			} else {
+				_teamColour = value;
+			}
+		}
+	}
 }

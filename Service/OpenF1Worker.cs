@@ -5,6 +5,8 @@ using System.Threading.Channels;
 
 namespace F1ReactionService;
 
+
+
 /// <summary>
 /// Provides a background service that monitors Formula 1 session data from the OpenF1 API and publishes race events
 /// such as leader changes and track status updates to a channel for downstream processing.
@@ -30,36 +32,18 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 	private readonly ChannelWriter<RaceEvent> _channelWriter = channel.Writer;
 	private readonly ILogger<OpenF1Worker> _logger = logger;
 	private readonly F1SessionState _sessionState = sessionState;
-	private readonly Dictionary<int, OpenF1Driver> _driverRegistry = [];
 
-	/// <summary>
-	/// Executes the background worker loop that monitors OpenF1 session state, retrieves session and leader information,
-	/// and publishes relevant events until cancellation is requested.
-	/// </summary>
-	/// <remarks>The method periodically checks the OpenF1 API for session and leader updates, and waits for either
-	/// a wake-up signal or a timeout when the session is inactive. It logs status information and publishes events when
-	/// the leader changes. The loop continues until the provided cancellation token is signaled.</remarks>
-	/// <param name="stoppingToken">A cancellation token that can be used to request the termination of the background operation.</param>
-	/// <returns>A task that represents the asynchronous execution of the background worker loop.</returns>
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-		var client = _httpClientFactory.CreateClient("OpenF1");
-		string? lastStatus = null;
-		int? lastP1Driver = null;
-		string currentSessionName = "Unknown";
-		string lastSessionName = "Unknown";
-		bool isRace = false;
+		var analyzer = new F1RaceAnalyzer();
 
-		_logger.LogInformation("🏎️ OpenF1Worker with P1 logic started.");
+		SessionInfo currentSessionInfo = new();
+
+		_logger.LogInformation("🏎️ OpenF1Worker started.");
 
 		while (!stoppingToken.IsCancellationRequested) {
-
 			if (!_sessionState.IsActive) {
 				_logger.LogInformation("💤 Standby. Waiting for START signal or timer...");
-
-				// Here the magic happens:
-				// Waits either for a manual trigger (Release),
-				// OR until 10 minutes have passed (Timeout),
-				// OR until the container is stopped (stoppingToken).
+				currentSessionInfo = new SessionInfo();
 				await _sessionState.WakeUpSignal.WaitAsync(TimeSpan.FromMinutes(10), stoppingToken);
 				continue;
 			}
@@ -70,87 +54,25 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 			}
 
 			try {
-				// Get session info
-				var sessions = await client.GetFromJsonAsync<List<JsonElement>>("sessions?session_key=latest", stoppingToken);
-				var session = sessions?.LastOrDefault();
+				var client = _httpClientFactory.CreateClient("OpenF1");
+				// update session info
+				await UpdateSessionInfo(client, currentSessionInfo, stoppingToken);
 
-				bool isLive = false;
-				bool isStale = false;
-
-				if (session != null && session.Value.ValueKind != JsonValueKind.Undefined) {
-					currentSessionName = session.Value.GetProperty("session_name").GetString() ?? "Unknown";
-
-					// Check whether it is a real race or just practice/qualifying
-					isRace = currentSessionName.Contains("Race", StringComparison.OrdinalIgnoreCase);
-
-					// Read the timestamp (OpenF1 always returns UTC)
-					if (session.Value.TryGetProperty("date_start", out var startProp) &&
-						session.Value.TryGetProperty("date_end", out var endProp)) {
-						var dateStart = startProp.GetDateTime();
-						var dateEnd = endProp.GetDateTime();
-						var now = DateTime.UtcNow;
-
-						// Is the event live right now? (With a 30min buffer after the race for the podium ceremony)
-						isLive = now >= dateStart && now <= dateEnd.AddMinutes(30);
-
-						// Is the event old? (Older than 24 hours)
-						isStale = (now - dateEnd).TotalHours > 24;
-					}
-				}
-
-				// If the data is old, we stop processing to save resources!
-				if (isStale) {
+				if (currentSessionInfo.IsStale) {
 					_logger.LogDebug("Last session is older than 24h. Ignoring data.");
 					await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
 					continue;
 				}
 
-				// Maintain Driver Registry
-				// Clear the registry if the session changes (e.g., from Practice 1 to Practice 2)
-				if (currentSessionName != lastSessionName) {
-					_driverRegistry.Clear();
-					lastSessionName = currentSessionName;
-				}
+				// update driver registry if needed
+				await CheckDriverRegistry(analyzer, currentSessionInfo, client, stoppingToken);
 
-				// Fetch drivers if the registry is empty
-				if (_driverRegistry.Count == 0) {
-					await FetchDriverRegistryAsync(client, stoppingToken);
-				}
+				// check track status
+				await CheckTrackStatusAsync(client, analyzer, stoppingToken);
 
-				// Track state (flags)
-				await CheckTrackStatus(client, (s) => lastStatus = s, lastStatus, stoppingToken);
+				// check for leader chagne
+				await CheckLeaderAsync(client, analyzer, currentSessionInfo, stoppingToken);
 
-				// Leader state
-				// OpenF1 always returns the "best" driver for position=1: 
-				// In races it's the physical leader, in practice/quali the one with the fastest lap.
-				var posList = await client.GetFromJsonAsync<List<JsonElement>>("position?session_key=latest&position=1", stoppingToken);
-				var p1Data = posList?.LastOrDefault();
-
-				if (p1Data != null && p1Data.Value.ValueKind != JsonValueKind.Undefined) {
-					int driverNum = p1Data.Value.GetProperty("driver_number").GetInt32();
-
-					if (driverNum != lastP1Driver) {
-						lastP1Driver = driverNum;
-
-						if (_driverRegistry.TryGetValue(driverNum, out var driver)) {
-							await PublishEvent("f1/race/p1", new {
-								driver = driver.FullName,
-								driver_number = driverNum,
-								short_name = driver.NameAcronym,
-								team = driver.TeamName,
-								color = driver.TeamColour,
-								reason = isRace ? "Race Leader" : "Fastest Lap",
-								session = currentSessionName,
-								is_live = isLive
-							});
-
-							_logger.LogWarning("🏆 P1 CHANGE: {Name} ({Reason} in {Session})",
-								driver.FullName, isRace ? "Leader" : "Fastest Lap", currentSessionName);
-						} else {
-							_logger.LogWarning("Driver with number {Num} not found in the live registry!", driverNum);
-						}
-					}
-				}
 			} catch (Exception ex) {
 				_logger.LogError(ex, "Error fetching data from the OpenF1 API.");
 			}
@@ -160,61 +82,102 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 	}
 
 	/// <summary>
-	/// Fetches the current driver lineup dynamically from the OpenF1 API.
+	/// Asynchronously updates the specified session information object with the latest session data retrieved from the
+	/// remote service.
 	/// </summary>
-	private async Task FetchDriverRegistryAsync(HttpClient client, CancellationToken ct) {
-		try {
-			_logger.LogInformation("Fetching current driver lineup live from OpenF1 API...");
+	/// <remarks>This method retrieves the most recent session data and updates the provided session information
+	/// object accordingly. The session is considered live if the current time is within 30 minutes after the session's end
+	/// time, and stale if more than 24 hours have passed since the session ended.</remarks>
+	/// <param name="client">The HTTP client used to send the request to the remote service.</param>
+	/// <param name="sessionInfo">The session information object to update with the latest session details.</param>
+	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
+	/// <returns>A task that represents the asynchronous update operation.</returns>
+	private static async Task UpdateSessionInfo(HttpClient client, SessionInfo sessionInfo, CancellationToken stoppingToken) {
+		var sessions = await client.GetFromJsonAsync<List<JsonElement>>("sessions?session_key=latest", stoppingToken);
+		var session = sessions?.LastOrDefault();
 
-			// We always fetch the drivers for the latest session
-			var drivers = await client.GetFromJsonAsync<List<OpenF1Driver>>("drivers?session_key=latest", ct);
+		if (session != null && session.Value.ValueKind != JsonValueKind.Undefined) {
+			sessionInfo.SessionName = session.Value.GetProperty("session_name").GetString() ?? "Unknown";
+			sessionInfo.IsRace = sessionInfo.SessionName.Contains("Race", StringComparison.OrdinalIgnoreCase);
 
-			if (drivers != null && drivers.Count != 0) {
-				_driverRegistry.Clear();
-				foreach (var d in drivers) {
-					// OpenF1 returns the color without '#'. We fix this directly for Home Assistant!
-					if (!string.IsNullOrEmpty(d.TeamColour) && !d.TeamColour.StartsWith('#')) {
-						d.TeamColour = $"#{d.TeamColour}";
-					}
-
-					// Fallback in case a color is missing from the API
-					if (string.IsNullOrEmpty(d.TeamColour)) {
-						d.TeamColour = "#FFFFFF";
-					}
-
-					_driverRegistry[d.DriverNumber] = d;
-				}
-				_logger.LogInformation("✅ Successfully loaded {Count} drivers into the registry.", _driverRegistry.Count);
+			if (session.Value.TryGetProperty("date_start", out var startProp) &&
+				session.Value.TryGetProperty("date_end", out var endProp)) {
+				var dateEnd = endProp.GetDateTime();
+				sessionInfo.IsLive = DateTime.UtcNow >= startProp.GetDateTime() && DateTime.UtcNow <= dateEnd.AddMinutes(30);
+				sessionInfo.IsStale = (DateTime.UtcNow - dateEnd).TotalHours > 24;
 			}
-		} catch (Exception ex) {
-			_logger.LogError(ex, "Failed to load the driver registry. Will retry shortly.");
 		}
 	}
 
 	/// <summary>
-	/// Checks the latest track status and publishes an event if the status has changed.
+	/// Checks whether the driver registry requires an update and, if necessary, fetches the latest driver lineup from the
+	/// OpenF1 API and updates the analyzer's registry.
 	/// </summary>
-	/// <remarks>If the track status has changed since the last check, this method updates the status and publishes
-	/// a flag status event. The method does not publish an event if the status is unchanged or unavailable.</remarks>
-	/// <param name="client">The HTTP client used to retrieve the latest track status from the remote service.</param>
-	/// <param name="setLastStatus">An action to update the last known status when a change is detected.</param>
-	/// <param name="lastStatus">The previously recorded track status, or null if no status has been recorded.</param>
-	/// <param name="ct">A cancellation token that can be used to cancel the asynchronous operation.</param>
+	/// <param name="analyzer">The analyzer instance whose driver registry may be updated.</param>
+	/// <param name="sessionInfo">The session information used to determine if a new session has started and whether an update is needed.</param>
+	/// <param name="client">The HTTP client used to retrieve driver data from the OpenF1 API.</param>
+	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
 	/// <returns>A task that represents the asynchronous operation.</returns>
-	private async Task CheckTrackStatus(HttpClient client, Action<string> setLastStatus, string? lastStatus, CancellationToken ct) {
-		var statusList = await client.GetFromJsonAsync<List<JsonElement>>("track_status?session_key=latest", ct);
-		var current = statusList?.LastOrDefault();
-		if (current != null && current.Value.ValueKind != JsonValueKind.Undefined) {
-			var status = current.Value.GetProperty("status").GetString();
-			if (status != lastStatus && status != null) {
-				setLastStatus(status);
-				await PublishEvent("f1/race/flag_status", new {
-					FLAG = MapFlag(status),
-					MESSAGE = current.Value.GetProperty("message").GetString()
-				});
+	private async Task CheckDriverRegistry(F1RaceAnalyzer analyzer, SessionInfo sessionInfo, HttpClient client, CancellationToken stoppingToken) {
+		if (analyzer.NeedsDriverRegistryUpdate(sessionInfo.IsNewSession)) {
+			_logger.LogInformation("Fetching current driver lineup live from OpenF1 API...");
+			var drivers = await client.GetFromJsonAsync<List<OpenF1Driver>>("drivers?session_key=latest", stoppingToken);
+			if (drivers != null && drivers.Count != 0) {
+				analyzer.UpdateDriverRegistry(drivers);
+				_logger.LogInformation("✅ Successfully loaded drivers into the registry.");
 			}
 		}
 	}
+
+	/// <summary>
+	/// Checks the current track status asynchronously and publishes any detected flag change events.
+	/// </summary>
+	/// <remarks>This method retrieves the latest track status, processes it to detect flag changes, and publishes
+	/// any detected events. If no flag change is detected, no event is published.</remarks>
+	/// <param name="client">The HTTP client used to retrieve the latest track status data.</param>
+	/// <param name="analyzer">The analyzer responsible for processing the track status and detecting flag change events.</param>
+	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
+	/// <returns>A task that represents the asynchronous operation.</returns>
+	private async Task CheckTrackStatusAsync(HttpClient client, F1RaceAnalyzer analyzer, CancellationToken stoppingToken) {
+		var statusList = await client.GetFromJsonAsync<List<JsonElement>>("track_status?session_key=latest", stoppingToken);
+
+		// Das Gehirn (Analyzer) macht die Arbeit
+		var flagEvent = analyzer.ProcessTrackStatus(statusList?.LastOrDefault());
+
+		// Wenn was passiert ist, feuert der Muskel (Worker) es raus
+		if (flagEvent != null) {
+			await _channelWriter.WriteAsync(flagEvent, stoppingToken);
+			_logger.LogInformation("🏁 FLAG CHANGE detected and published.");
+		}
+	}
+
+	/// <summary>
+	/// Checks for changes in the race leader and publishes a leader change event if detected.
+	/// </summary>
+	/// <remarks>This method retrieves the latest leader position, analyzes it for changes, and publishes an event
+	/// if a new leader is detected. The event is written to a channel for further processing.</remarks>
+	/// <param name="client">The HTTP client used to retrieve the latest leader position data.</param>
+	/// <param name="analyzer">The analyzer responsible for processing leader position information and generating leader change events.</param>
+	/// <param name="sessionInfo">The session information containing details about the current race session.</param>
+	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
+	/// <returns>A task that represents the asynchronous operation.</returns>
+	private async Task CheckLeaderAsync(HttpClient client, F1RaceAnalyzer analyzer, SessionInfo sessionInfo, CancellationToken stoppingToken) {
+		var posList = await client.GetFromJsonAsync<List<JsonElement>>("position?session_key=latest&position=1", stoppingToken);
+
+		var p1Event = analyzer.ProcessLeader(
+			posList?.LastOrDefault(),
+			sessionInfo.IsRace,
+			sessionInfo.SessionName,
+			sessionInfo.IsLive
+		);
+
+		if (p1Event != null) {
+			await _channelWriter.WriteAsync(p1Event, stoppingToken);
+			_logger.LogWarning("🏆 P1 CHANGE detected and published.");
+		}
+	}
+
+	#region [ Demo data ]
 
 	/// <summary>
 	/// Publishes an event with the specified topic and payload to the event channel asynchronously.
@@ -228,23 +191,6 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 		var json = JsonSerializer.Serialize(payload);
 		await _channelWriter.WriteAsync(new RaceEvent(topic, json));
 	}
-
-	/// <summary>
-	/// Maps a status code to its corresponding flag name.
-	/// </summary>
-	/// <param name="status">The status code to map. Expected values are "1", "2", "4", "5", or "6". Other values will be mapped to "UNKNOWN".</param>
-	/// <returns>A string representing the flag name corresponding to the specified status code. Returns "UNKNOWN" if the status
-	/// code is not recognized.</returns>
-	private static string MapFlag(string status) => status switch {
-		"1" => "GREEN",
-		"2" => "YELLOW",
-		"4" => "SC",
-		"5" => "RED",
-		"6" => "VSC",
-		_ => "UNKNOWN"
-	};
-
-	#region [ Demo data ]
 
 	/// <summary>
 	/// Runs a demonstration sequence that simulates a series of race events by publishing status updates and delays

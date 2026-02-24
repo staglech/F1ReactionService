@@ -10,4 +10,5 @@
     <File Path="README.md" />
     <File Path="release.ps1" />
   </Folder>
+  <Project Path="F1ReactionService.Tests/F1ReactionService.Tests.csproj" />
 </Solution>

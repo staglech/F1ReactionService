@@ -1,7 +1,7 @@
 Write-Host "=== F1 Reaction Service - Release Manager ===" -ForegroundColor Cyan
 
 # 1. Version abfragen
-$version = Read-Host "Welche Version willst du releasen? (z.B. 0.1.3)"
+$version = Read-Host "Welche Version willst du releasen? (z.B. 0.1.5)"
 
 if ([string]::IsNullOrWhiteSpace($version)) {
     Write-Host "Keine Version eingegeben. Abbruch!" -ForegroundColor Red
@@ -16,19 +16,30 @@ if (-Not (Test-Path $csprojPath)) {
     exit
 }
 
+# --- NEU: Das Sicherheitsnetz (Unit Tests) ---
+Write-Host "🧪 Führe Unit Tests aus..." -ForegroundColor Yellow
+
+# Startet die Tests (mit minimaler Ausgabe, damit die Konsole übersichtlich bleibt)
+dotnet test -v m
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "❌ OH NEIN! Die Tests sind fehlgeschlagen." -ForegroundColor Red
+    Write-Host "Das Release wurde sicherheitshalber abgebrochen. Es wurde NICHTS zu GitHub gepusht." -ForegroundColor Red
+    exit
+}
+
+Write-Host "✅ Alle Tests bestanden! Freigabe erteilt." -ForegroundColor Green
+# ---------------------------------------------
+
 # 2. csproj-Datei aktualisieren (kugelsicher)
-# Wir lesen die Datei als einen einzigen Textblock ein
 $content = Get-Content $csprojPath -Raw
 
 if ($content -match "<Version>.*</Version>") {
-    # Wenn der Tag schon da ist, ersetzen wir ihn
     $content = $content -replace "<Version>.*</Version>", "<Version>$version</Version>"
 } else {
-    # Wenn der Tag fehlt, mogeln wir ihn vor das Ende der ersten PropertyGroup
     $content = $content -replace "</PropertyGroup>", "  <Version>$version</Version>`r`n  </PropertyGroup>"
 }
 
-# Datei sauber und ohne Formatierungsfehler zurückschreiben
 [System.IO.File]::WriteAllText("$PWD\$csprojPath", $content)
 
 Write-Host "-> csproj wurde auf Version $version aktualisiert." -ForegroundColor Green
@@ -43,4 +54,5 @@ git push origin master
 git push origin "v$version"
 
 Write-Host "=============================================" -ForegroundColor Cyan
-Write-Host "ERFOLG! Version v$version wurde gestempelt und gepusht!" -ForegroundColor Green
+Write-Host "🚀 ERFOLG! Version v$version wurde gestempelt und gepusht!" -ForegroundColor Green
+Write-Host "GitHub baut jetzt im Hintergrund dein Docker-Image." -ForegroundColor Gray
