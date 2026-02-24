@@ -58,8 +58,8 @@ public class F1RaceAnalyzer {
 		if (status != _lastStatus && status != null) {
 			_lastStatus = status;
 			return new RaceEvent("f1/race/flag_status", JsonSerializer.Serialize(new {
-				FLAG = MapFlag(status),
-				MESSAGE = currentTrackStatus.Value.GetProperty("message").GetString()
+				flag = MapFlag(status),
+				message = currentTrackStatus.Value.GetProperty("message").GetString()
 			}));
 		}
 

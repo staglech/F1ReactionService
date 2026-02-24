@@ -44,8 +44,8 @@ The service publishes lightweight JSON payloads when important events happen on 
 Fired whenever the track condition changes (e.g., Green, Yellow, Red, SC, VSC).
 ```json
 {
-  "FLAG": "RED",
-  "MESSAGE": "Session Suspended"
+  "flag": "RED",
+  "message": "Session Suspended"
 }
 ```
 

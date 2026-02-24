@@ -204,38 +204,38 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 		await Task.Delay(3000, ct);
 
 		_logger.LogInformation("🟢 Lights Out! The race is on. Max Verstappen retains the lead.");
-		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
+		await PublishEvent("f1/race/flag_status", new { flag = "GREEN", message = "Track Clear" });
 		await PublishEvent("f1/race/p1", new { driver = "Max Verstappen", driver_number = 33, short_name = "VER", team = "Red Bull Racing", color = "#3671C6", reason = "Race Leader", session = "Race", is_live = true });
 		await Task.Delay(10000, ct);
 
 		_logger.LogInformation("🟡 Yellow flag in Sector 2! Someone spun.");
-		await PublishEvent("f1/race/flag_status", new { FLAG = "YELLOW", MESSAGE = "Yellow in Sector 2" });
+		await PublishEvent("f1/race/flag_status", new { flag = "YELLOW", message = "Yellow in Sector 2" });
 		await Task.Delay(6000, ct);
 
 		_logger.LogInformation("🟢 Track clear. Lando Norris attacks and overtakes Verstappen!");
-		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
+		await PublishEvent("f1/race/flag_status", new { flag = "GREEN", message = "Track Clear" });
 		await PublishEvent("f1/race/p1", new { driver = "Lando Norris", driver_number = 1, short_name = "NOR", team = "McLaren", color = "#FF8000", reason = "Race Leader", session = "Race", is_live = true });
 		await Task.Delay(12000, ct);
 
 		_logger.LogInformation("🟠 Virtual Safety Car! Debris on the main straight.");
-		await PublishEvent("f1/race/flag_status", new { FLAG = "VSC", MESSAGE = "Virtual Safety Car Deployed" });
+		await PublishEvent("f1/race/flag_status", new { flag = "VSC", message = "Virtual Safety Car Deployed" });
 		await Task.Delay(8000, ct);
 
 		_logger.LogInformation("🟢 VSC ending. Race continues.");
-		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
+		await PublishEvent("f1/race/flag_status", new { flag = "GREEN", message = "Track Clear" });
 		await Task.Delay(6000, ct);
 
 		_logger.LogInformation("🟡🟡 Heavy crash! Safety Car deployed. Lewis Hamilton inherits P1 due to pit stop chaos.");
-		await PublishEvent("f1/race/flag_status", new { FLAG = "SC", MESSAGE = "Safety Car Deployed" });
+		await PublishEvent("f1/race/flag_status", new { flag = "SC", message = "Safety Car Deployed" });
 		await PublishEvent("f1/race/p1", new { driver = "Lewis Hamilton", driver_number = 44, short_name = "HAM", team = "Ferrari", color = "#ED1131", reason = "Race Leader", session = "Race", is_live = true });
 		await Task.Delay(12000, ct);
 
 		_logger.LogInformation("🔴 Red flag! The race is suspended to repair the barrier.");
-		await PublishEvent("f1/race/flag_status", new { FLAG = "RED", MESSAGE = "Session Suspended" });
+		await PublishEvent("f1/race/flag_status", new { flag = "RED", message = "Session Suspended" });
 		await Task.Delay(10000, ct);
 
 		_logger.LogInformation("🟢 Standing Start Restart! George Russell blasts past everyone in the Mercedes.");
-		await PublishEvent("f1/race/flag_status", new { FLAG = "GREEN", MESSAGE = "Track Clear" });
+		await PublishEvent("f1/race/flag_status", new { flag = "GREEN", message = "Track Clear" });
 		await PublishEvent("f1/race/p1", new { driver = "George Russell", driver_number = 63, short_name = "RUS", team = "Mercedes", color = "#27F4D2", reason = "Race Leader", session = "Race", is_live = true });
 		await Task.Delay(12000, ct);
 
