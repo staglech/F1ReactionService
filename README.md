@@ -75,7 +75,15 @@ Fired whenever a new driver takes P1 in the race, or sets the fastest lap in a p
 }
 ```
 
-**2. Driver-Specific Events (`f1/driver/{driver_number}/events`)**
+**3. Weather Events (`f1/driver/weather`)**
+```json
+{
+  "raining": true,
+  "rainfall_value": 1.5
+}
+```
+
+**4. Driver-Specific Events (`f1/driver/{driver_number}/events`)**
 ```json
 {
   "event_type": "OVERRIDE_AVAILABLE", // Alternatives: "PIT_ENTRY", "RETIRED", "FASTEST_LAP"
