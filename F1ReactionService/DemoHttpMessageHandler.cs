@@ -64,6 +64,54 @@ public class DemoHttpMessageHandler(F1SessionState sessionState) : HttpMessageHa
 			} else {
 				content = JsonSerializer.Serialize(maxP1);
 			}
+		} else if (path.Contains("intervals")) {
+			object[] intervals;
+
+			if (_tickCount < 1) {
+				// Max is 1.5s behind Lando (no  override)
+				intervals = [new { driver_number = 33, interval = 1.500 }];
+			} else if (_tickCount < 4) {
+				// Tick 1, 2, 3: Max is in the 1-Second-Window! (Override Attack Event fires)
+				intervals = [new { driver_number = 33, interval = 0.600 }];
+			} else {
+				// >= Tick 4: Max overtook (P1). Lando is now 2 seconds behind Max.
+				intervals = [
+					new { driver_number = 1, interval = 2.000 },
+					new { driver_number = 33, interval = (double?)null }
+				];
+			}
+			content = JsonSerializer.Serialize(intervals);
+
+		} else if (path.Contains("pit")) {
+			// Lando under yellow flag in box
+			if (_tickCount >= 5) {
+				var pitData = new[] {
+					new { driver_number = 1, lap = 15 } // Lando stops in round 15
+				};
+				content = JsonSerializer.Serialize(pitData);
+			} else {
+				content = "[]";
+			}
+		} else if (path.Contains("weather")) {
+			// >= Tick 6 rain is coming
+			var dryWeather = new[] { new { rainfall = 0.0 } };
+			var wetWeather = new[] { new { rainfall = 1.0 } };
+
+			content = JsonSerializer.Serialize(_tickCount >= 6 ? wetWeather : dryWeather);
+
+		} else if (path.Contains("race_control")) {
+			// Tick 7: Max Verstappen gets the fastet lap
+			if (_tickCount == 7) {
+				var fastestLapMsg = new[] { new { message = "FASTEST LAP - CAR 33 (VER) - 1:24.321" } };
+				content = JsonSerializer.Serialize(fastestLapMsg);
+			}
+			// Tick 8: Lando Norris retired
+			else if (_tickCount >= 8) {
+				var retirementMsg = new[] { new { message = "CAR 1 (NOR) RETIRED" } };
+				content = JsonSerializer.Serialize(retirementMsg);
+			} else {
+				content = "[]";
+			}
 		}
 
 		return Task.FromResult(new HttpResponseMessage {

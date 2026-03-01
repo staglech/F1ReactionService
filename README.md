@@ -37,6 +37,17 @@ services:
 
 ## 📡 MQTT Interface
 
+### 📥 Inbound Commands (Controlling the Service)
+Since the service is designed to save resources, it stays in standby mode until you wake it up. Send a message to the `f1/control` topic to control its behavior:
+
+* `START` - Wakes up the service and begins polling the OpenF1 API for live session data.
+* `STOP` - Puts the service back into standby mode.
+* `CALIBRATE_START` - Triggers a manual calibration/refresh of the current session data. The TV signal is usually slower than the API data. This can be used when a session starts, e.g when the lights go out or the pit lane opens.
+* `DEMO_START` - Fires up the built-in Hollywood Demo Mode to test your smart home lighting offline.
+* `TRACK_ADD_<driver_number>` - Adds a driver to the tracked drivers list (e.g., `TRACK_ADD_44` to track Lewis Hamilton). This is useful if you want to receive events related to specific drivers only. (see outbound events below)
+* `TRACK_REMOVE_<driver_number>` - Removes a driver from the tracked drivers list. 
+* `TRACK_CLEAR` - Clears the tracked drivers list. 
+
 ### 📤 Outbound Events (Home Assistant Triggers)
 The service publishes lightweight JSON payloads when important events happen on track.
 
@@ -61,6 +72,24 @@ Fired whenever a new driver takes P1 in the race, or sets the fastest lap in a p
   "reason": "Race Leader",
   "session": "Race",
   "is_live": true
+}
+```
+
+**3. Weather Events (`f1/driver/weather`)**
+```json
+{
+  "raining": true,
+  "rainfall_value": 1.5
+}
+```
+
+**4. Driver-Specific Events (`f1/driver/{driver_number}/events`)**
+```json
+{
+  "event_type": "OVERRIDE_AVAILABLE", // Alternatives: "PIT_ENTRY", "RETIRED", "FASTEST_LAP"
+  "driver_number": 44,
+  "value": true, 
+  "details": "Gap is 0.8s"
 }
 ```
 

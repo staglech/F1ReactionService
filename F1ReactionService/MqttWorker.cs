@@ -20,6 +20,7 @@ public class MqttWorker : BackgroundService {
 	private readonly IConfiguration _config;
 	private readonly F1SessionState _sessionState;
 	private readonly IMqttClient _mqttClient;
+	private readonly IMqttCommandProcessor _commandProcessor;
 
 	/// <summary>
 	/// Initializes a new instance of the MqttWorker class with the specified logger, event channel, configuration, and
@@ -33,11 +34,13 @@ public class MqttWorker : BackgroundService {
 		ILogger<MqttWorker> logger,
 		Channel<RaceEvent> channel,
 		IConfiguration config,
-		F1SessionState sessionState) {
+		F1SessionState sessionState,
+		IMqttCommandProcessor commandProcessor) {
 		_logger = logger;
 		_channelReader = channel.Reader;
 		_config = config;
 		_sessionState = sessionState;
+		_commandProcessor = commandProcessor;
 
 		var mqttFactory = new MqttClientFactory();
 		_mqttClient = mqttFactory.CreateMqttClient();
@@ -75,70 +78,52 @@ public class MqttWorker : BackgroundService {
 			var payloadBytes = e.ApplicationMessage.Payload;
 			var command = !payloadBytes.IsEmpty ? Encoding.UTF8.GetString(payloadBytes) : string.Empty;
 
-			switch (command) {
-				case "START":
-					_sessionState.IsDemoMode = false;
-					_sessionState.IsActive = true;
-					if (_sessionState.WakeUpSignal.CurrentCount == 0) {
-						_sessionState.WakeUpSignal.Release();
-					}
-					_logger.LogWarning("🚀 F1-service awake! Start polling...");
-					break;
-
-				case "DEMO_START":
-					_sessionState.IsDemoMode = true;
-					_sessionState.IsActive = true;
-					_logger.LogWarning("🎪 STARTED DEMO-MODE! Running demo script...");
-					if (_sessionState.WakeUpSignal.CurrentCount == 0) {
-						_sessionState.WakeUpSignal.Release();
-					}
-
-					break;
-
-				case "STOP":
-					_sessionState.IsDemoMode = false;
-					_sessionState.IsActive = false;
-					_sessionState.TrueDataStartTime = null;
-					_logger.LogWarning("💤 F1-service moves to STANDBY.");
-					break;
-
-				case "CALIBRATE_START":
-					if (_sessionState.TrueDataStartTime.HasValue) {
-						_sessionState.CurrentDelay = DateTime.UtcNow - _sessionState.TrueDataStartTime.Value;
-						_logger.LogWarning("⏱️ CALIBRATE: Delay set to {S}s.", _sessionState.CurrentDelay.TotalSeconds);
-					}
-					break;
-			}
+			_commandProcessor.ProcessCommand(command);
 			await Task.CompletedTask;
 		};
 
-		// Create connection and start the subscription
-		_logger.LogInformation("🌐 MqttWorker will connect to {Server}:{Port}...", server, port);
-		await _mqttClient.ConnectAsync(mqttOptions, stoppingToken);
-		await _mqttClient.SubscribeAsync("f1/service/command", cancellationToken: stoppingToken);
+		try {
+			// Create connection and start the subscription
+			_logger.LogInformation("🌐 MqttWorker will connect to {Server}:{Port}...", server, port);
+			await _mqttClient.ConnectAsync(mqttOptions, stoppingToken);
+			await _mqttClient.SubscribeAsync("f1/service/command", cancellationToken: stoppingToken);
 
-		await foreach (var raceEvent in _channelReader.ReadAllAsync(stoppingToken)) {
-			_ = Task.Run(async () => {
-				if (_sessionState.CurrentDelay > TimeSpan.Zero) {
-					await Task.Delay(_sessionState.CurrentDelay, stoppingToken);
-				}
-
-				if (_mqttClient.IsConnected) {
-					var message = new MqttApplicationMessageBuilder()
-						.WithTopic(raceEvent.Topic)
-						.WithPayload(raceEvent.Payload)
-						.Build();
-
-					await _mqttClient.PublishAsync(message, stoppingToken);
-					_logger.LogInformation("📤 MQTT sends ({Delay}s delay): {Topic}",
-						_sessionState.CurrentDelay.TotalSeconds, raceEvent.Topic);
-
-					if (_sessionState.IsDemoMode) {
-						_logger.LogInformation("Sent: {Payload}",
-						raceEvent.Payload);
+			await foreach (var raceEvent in _channelReader.ReadAllAsync(stoppingToken)) {
+				_ = Task.Run(async () => {
+					if (_sessionState.CurrentDelay > TimeSpan.Zero) {
+						await Task.Delay(_sessionState.CurrentDelay, stoppingToken);
 					}
-				}
-			}, stoppingToken);
+
+					if (_mqttClient.IsConnected) {
+						var message = new MqttApplicationMessageBuilder()
+							.WithTopic(raceEvent.Topic)
+							.WithPayload(raceEvent.Payload)
+							.Build();
+
+						await _mqttClient.PublishAsync(message, stoppingToken);
+						_logger.LogInformation("📤 MQTT sends ({Delay}s delay): {Topic}",
+							_sessionState.CurrentDelay.TotalSeconds, raceEvent.Topic);
+
+						if (_sessionState.IsDemoMode) {
+							_logger.LogInformation("Sent: {Payload}",
+							raceEvent.Payload);
+						}
+					}
+				}, stoppingToken);
+			}
+		} catch (OperationCanceledException) {
+			// Will be thrown when the stopoingToken is triggered by Ctrl+C or the container-stop.
+			// This is expected behavior - that is why we simply log an info message.
+			_logger.LogInformation("🛑 MqttWorker is shutting down gracefully...");
+		} catch (Exception ex) {
+			_logger.LogError(ex, "❌ MqttWorker encountered an unexpected error.");
+		} finally {
+			// Clean disconnect in case we are still connected.
+			if (_mqttClient != null && _mqttClient.IsConnected) {
+				await _mqttClient.DisconnectAsync(new MqttClientDisconnectOptionsBuilder()
+					.WithReason(MqttClientDisconnectOptionsReason.NormalDisconnection)
+					.Build());
+			}
 		}
 	}
 

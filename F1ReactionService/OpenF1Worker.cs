@@ -39,48 +39,170 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 
 		_logger.LogInformation("🏎️ OpenF1Worker started.");
 
-		while (!stoppingToken.IsCancellationRequested) {
-			if (!_sessionState.IsActive) {
-				_logger.LogInformation("💤 Standby. Waiting for START signal or timer...");
-				currentSessionInfo = new SessionInfo();
-				demoHandler = null;
-				await _sessionState.WakeUpSignal.WaitAsync(TimeSpan.FromMinutes(10), stoppingToken);
-				continue;
-			}
-
-			try {
-				HttpClient client;
-				if (_sessionState.IsDemoMode) {
-					demoHandler ??= new DemoHttpMessageHandler(_sessionState);
-					client = new HttpClient(demoHandler) { BaseAddress = new Uri("https://api.openf1.org/v1/") };
-				} else {
+		try {
+			while (!stoppingToken.IsCancellationRequested) {
+				if (!_sessionState.IsActive) {
+					_logger.LogInformation("💤 Standby. Waiting for START signal or timer...");
+					analyzer.Reset();
+					currentSessionInfo = new SessionInfo();
 					demoHandler = null;
-					client = _httpClientFactory.CreateClient("OpenF1");
-				}
-
-				// update session info
-				await UpdateSessionInfo(client, currentSessionInfo, stoppingToken);
-
-				if (currentSessionInfo.IsStale) {
-					_logger.LogDebug("Last session is older than 24h. Ignoring data.");
-					await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+					await _sessionState.WakeUpSignal.WaitAsync(TimeSpan.FromMinutes(10), stoppingToken);
 					continue;
 				}
 
-				// update driver registry if needed
-				await CheckDriverRegistry(analyzer, currentSessionInfo, client, stoppingToken);
+				try {
+					HttpClient client;
+					if (_sessionState.IsDemoMode) {
+						demoHandler ??= new DemoHttpMessageHandler(_sessionState);
+						client = new HttpClient(demoHandler) { BaseAddress = new Uri("https://api.openf1.org/v1/") };
+					} else {
+						demoHandler = null;
+						client = _httpClientFactory.CreateClient("OpenF1");
+					}
 
-				// check track status
-				await CheckTrackStatusAsync(client, analyzer, stoppingToken);
+					// update session info
+					await UpdateSessionInfo(client, currentSessionInfo, stoppingToken);
 
-				// check for leader chagne
-				await CheckLeaderAsync(client, analyzer, currentSessionInfo, stoppingToken);
+					if (currentSessionInfo.IsStale) {
+						_logger.LogDebug("Last session is older than 24h. Ignoring data.");
+						await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+						continue;
+					}
 
-			} catch (Exception ex) {
-				_logger.LogError(ex, "Error fetching data from the OpenF1 API.");
+					// update driver registry if needed
+					await CheckDriverRegistry(analyzer, currentSessionInfo, client, stoppingToken);
+
+					// check track status
+					await CheckTrackStatusAsync(client, analyzer, stoppingToken);
+
+					// check for leader chagne
+					await CheckLeaderAsync(client, analyzer, currentSessionInfo, stoppingToken);
+
+					// check weather for rain
+					await CheckWeatherAsync(client, analyzer, stoppingToken);
+
+					// Check for Tracked Drivers
+					await CheckIntervalsAsync(client, analyzer, stoppingToken);
+					await CheckPitStopsAsync(client, analyzer, stoppingToken);
+					await CheckRaceControlDriverEventsAsync(client, analyzer, stoppingToken);
+
+				} catch (Exception ex) {
+					_logger.LogError(ex, "Error fetching data from the OpenF1 API.");
+				}
+
+				await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 			}
+		} catch (OperationCanceledException) {
+			// Will be thrown when the stopoingToken is triggered by Ctrl+C or the container-stop.
+			// This is expected behavior - that is why we simply log an info message.
+			_logger.LogInformation("🛑 OpenF1Worker is shutting down gracefully...");
+		} catch (Exception ex) {
+			_logger.LogCritical(ex, "💥 OpenF1Worker encountered a fatal error and stopped.");
+		}
+	}
 
-			await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+	/// <summary>
+	/// Checks the latest weather conditions and notifies listeners if a significant weather event, such as rain, is
+	/// detected.
+	/// </summary>
+	/// <remarks>This method retrieves the most recent weather information and processes it to detect changes
+	/// relevant to the application, such as the onset of rain. If a new weather event is detected, it is published to
+	/// listeners. The method avoids redundant notifications by tracking previous weather states.</remarks>
+	/// <param name="client">The HTTP client used to retrieve weather data from the remote service.</param>
+	/// <param name="analyzer">The analyzer responsible for processing weather data and determining if a weather event has occurred.</param>
+	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
+	/// <returns>A task that represents the asynchronous operation.</returns>
+	private async Task CheckWeatherAsync(HttpClient client, F1RaceAnalyzer analyzer, CancellationToken stoppingToken) {
+		var weatherList = await client.GetFromJsonAsync<List<JsonElement>>("weather?session_key=latest", stoppingToken);
+		var weatherEvent = analyzer.ProcessWeather(weatherList?.LastOrDefault());
+
+		if (weatherEvent != null) {
+			await _channelWriter.WriteAsync(weatherEvent, stoppingToken);
+			_logger.LogInformation("🌧️ WEATHER CHANGE detected (Rain status updated).");
+		}
+	}
+
+	/// <summary>
+	/// Checks for race control driver events such as retirements and fastest laps, and publishes relevant events for
+	/// tracked drivers.
+	/// </summary>
+	/// <remarks>This method retrieves the latest race control data in a single API call and processes it for all
+	/// currently tracked drivers. Events are published only if relevant driver events are detected. If no drivers are
+	/// being tracked, the method completes without performing any operations.</remarks>
+	/// <param name="client">The HTTP client used to retrieve race control data from the external API.</param>
+	/// <param name="analyzer">The analyzer responsible for processing race control data and extracting driver events.</param>
+	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
+	/// <returns>A task that represents the asynchronous operation.</returns>
+	private async Task CheckRaceControlDriverEventsAsync(HttpClient client, F1RaceAnalyzer analyzer, CancellationToken stoppingToken) {
+		var trackedDrivers = _sessionState.TrackedDrivers.Keys.ToList();
+		if (trackedDrivers.Count == 0) {
+			return;
+		}
+
+		var rcList = await client.GetFromJsonAsync<List<JsonElement>>("race_control?session_key=latest", stoppingToken);
+
+		// Check for DNFs
+		var retirementEvents = analyzer.ProcessRetirements(rcList, trackedDrivers);
+		foreach (var raceEvent in retirementEvents) {
+			await _channelWriter.WriteAsync(raceEvent, stoppingToken);
+			_logger.LogWarning("💥 DRIVER EVENT (Retirement): Published to {Topic}", raceEvent.Topic);
+		}
+
+		// Check for fastest lap
+		var fastestLapEvents = analyzer.ProcessFastestLap(rcList, trackedDrivers);
+		foreach (var raceEvent in fastestLapEvents) {
+			await _channelWriter.WriteAsync(raceEvent, stoppingToken);
+			_logger.LogInformation("🚀 DRIVER EVENT (Fastest Lap): Published to {Topic}", raceEvent.Topic);
+		}
+	}
+
+	/// <summary>
+	/// Checks the latest race intervals for tracked drivers and publishes relevant race events asynchronously.
+	/// </summary>
+	/// <remarks>No API request is made if no drivers are currently being tracked. Race events generated from
+	/// interval data are published to the associated channel.</remarks>
+	/// <param name="client">The HTTP client used to retrieve interval data from the remote API.</param>
+	/// <param name="analyzer">The analyzer responsible for processing interval data and generating race events.</param>
+	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
+	/// <returns>A task that represents the asynchronous operation.</returns>
+	private async Task CheckIntervalsAsync(HttpClient client, F1RaceAnalyzer analyzer, CancellationToken stoppingToken) {
+		var trackedDrivers = _sessionState.TrackedDrivers.Keys.ToList();
+
+		if (trackedDrivers.Count == 0) {
+			return;
+		}
+
+		var intervalsList = await client.GetFromJsonAsync<List<JsonElement>>("intervals?session_key=latest", stoppingToken);
+		var overrideEvents = analyzer.ProcessIntervals(intervalsList, trackedDrivers);
+
+		foreach (var raceEvent in overrideEvents) {
+			await _channelWriter.WriteAsync(raceEvent, stoppingToken);
+			_logger.LogInformation("⚡ DRIVER EVENT (Override): Published to {Topic}", raceEvent.Topic);
+		}
+	}
+
+	/// <summary>
+	/// Checks for new pit stop events for tracked drivers and publishes them asynchronously.
+	/// </summary>
+	/// <remarks>No API request is made if there are no tracked drivers. Only pit stop events relevant to currently
+	/// tracked drivers are processed and published.</remarks>
+	/// <param name="client">The HTTP client used to retrieve pit stop data from the remote API.</param>
+	/// <param name="analyzer">The analyzer responsible for processing pit stop data and identifying relevant events for tracked drivers.</param>
+	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
+	/// <returns>A task that represents the asynchronous operation.</returns>
+	private async Task CheckPitStopsAsync(HttpClient client, F1RaceAnalyzer analyzer, CancellationToken stoppingToken) {
+		var trackedDrivers = _sessionState.TrackedDrivers.Keys.ToList();
+
+		if (trackedDrivers.Count == 0) {
+			return;
+		}
+
+		var pitList = await client.GetFromJsonAsync<List<JsonElement>>("pit?session_key=latest", stoppingToken);
+		var pitEvents = analyzer.ProcessPitStops(pitList, trackedDrivers);
+
+		foreach (var raceEvent in pitEvents) {
+			await _channelWriter.WriteAsync(raceEvent, stoppingToken);
+			_logger.LogInformation("🔧 DRIVER EVENT (Pit Entry): Published to {Topic}", raceEvent.Topic);
 		}
 	}
 
