@@ -3,7 +3,7 @@ using MQTTnet;
 using System.Text;
 using System.Threading.Channels;
 
-namespace F1ReactionService;
+namespace F1ReactionService.Workers;
 
 /// <summary>
 /// Provides a background service that connects to an MQTT broker, subscribes to command topics, and publishes race

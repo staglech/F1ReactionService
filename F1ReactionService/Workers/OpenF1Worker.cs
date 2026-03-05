@@ -1,9 +1,10 @@
 ﻿using F1ReactionService.Model;
+using F1ReactionService.Recording;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading.Channels;
 
-namespace F1ReactionService;
+namespace F1ReactionService.Workers;
 
 /// <summary>
 /// Provides a background service that monitors Formula 1 session data from the OpenF1 API and publishes race events
@@ -25,11 +26,13 @@ namespace F1ReactionService;
 public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 	Channel<RaceEvent> channel,
 	ILogger<OpenF1Worker> logger,
+	F1EventRecorder eventRecorder,
 	F1SessionState sessionState) : BackgroundService {
 	private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
 	private readonly ChannelWriter<RaceEvent> _channelWriter = channel.Writer;
 	private readonly ILogger<OpenF1Worker> _logger = logger;
 	private readonly F1SessionState _sessionState = sessionState;
+	private readonly F1EventRecorder _eventRecorder = eventRecorder;
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
 		var analyzer = new F1RaceAnalyzer();
@@ -73,18 +76,18 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 					await CheckDriverRegistry(analyzer, currentSessionInfo, client, stoppingToken);
 
 					// check track status
-					await CheckTrackStatusAsync(client, analyzer, stoppingToken);
+					await CheckTrackStatusAsync(client, analyzer, currentSessionInfo, stoppingToken);
 
 					// check for leader chagne
 					await CheckLeaderAsync(client, analyzer, currentSessionInfo, stoppingToken);
 
 					// check weather for rain
-					await CheckWeatherAsync(client, analyzer, stoppingToken);
+					await CheckWeatherAsync(client, analyzer, currentSessionInfo, stoppingToken);
 
-					// Check for Tracked Drivers
-					await CheckIntervalsAsync(client, analyzer, stoppingToken);
-					await CheckPitStopsAsync(client, analyzer, stoppingToken);
-					await CheckRaceControlDriverEventsAsync(client, analyzer, stoppingToken);
+					// Check for drivers
+					await CheckIntervalsAsync(client, analyzer, currentSessionInfo, stoppingToken);
+					await CheckPitStopsAsync(client, analyzer, currentSessionInfo, stoppingToken);
+					await CheckRaceControlDriverEventsAsync(client, analyzer, currentSessionInfo, stoppingToken);
 
 				} catch (Exception ex) {
 					_logger.LogError(ex, "Error fetching data from the OpenF1 API.");
@@ -110,98 +113,79 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 	/// listeners. The method avoids redundant notifications by tracking previous weather states.</remarks>
 	/// <param name="client">The HTTP client used to retrieve weather data from the remote service.</param>
 	/// <param name="analyzer">The analyzer responsible for processing weather data and determining if a weather event has occurred.</param>
+	/// <param name="sessionInfo">The session information containing details about the current race session.</param>
 	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
 	/// <returns>A task that represents the asynchronous operation.</returns>
-	private async Task CheckWeatherAsync(HttpClient client, F1RaceAnalyzer analyzer, CancellationToken stoppingToken) {
+	private async Task CheckWeatherAsync(HttpClient client, F1RaceAnalyzer analyzer, SessionInfo sessionInfo, CancellationToken stoppingToken) {
 		var weatherList = await client.GetFromJsonAsync<List<JsonElement>>("weather?session_key=latest", stoppingToken);
 		var weatherEvent = analyzer.ProcessWeather(weatherList?.LastOrDefault());
 
 		if (weatherEvent != null) {
-			await _channelWriter.WriteAsync(weatherEvent, stoppingToken);
+			await HandleEventAsync(weatherEvent, sessionInfo, stoppingToken);
 			_logger.LogInformation("🌧️ WEATHER CHANGE detected (Rain status updated).");
 		}
 	}
 
 	/// <summary>
-	/// Checks for race control driver events such as retirements and fastest laps, and publishes relevant events for
-	/// tracked drivers.
+	/// Checks for race control driver events such as retirements and fastest laps, and publishes relevant events.
 	/// </summary>
 	/// <remarks>This method retrieves the latest race control data in a single API call and processes it for all
-	/// currently tracked drivers. Events are published only if relevant driver events are detected. If no drivers are
-	/// being tracked, the method completes without performing any operations.</remarks>
+	/// drivers. Events are published only if relevant driver events are detected.</remarks>
 	/// <param name="client">The HTTP client used to retrieve race control data from the external API.</param>
 	/// <param name="analyzer">The analyzer responsible for processing race control data and extracting driver events.</param>
+	/// <param name="sessionInfo">The session information containing details about the current race session.</param>
 	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
 	/// <returns>A task that represents the asynchronous operation.</returns>
-	private async Task CheckRaceControlDriverEventsAsync(HttpClient client, F1RaceAnalyzer analyzer, CancellationToken stoppingToken) {
-		var trackedDrivers = _sessionState.TrackedDrivers.Keys.ToList();
-		if (trackedDrivers.Count == 0) {
-			return;
-		}
-
+	private async Task CheckRaceControlDriverEventsAsync(HttpClient client, F1RaceAnalyzer analyzer, SessionInfo sessionInfo, CancellationToken stoppingToken) {
 		var rcList = await client.GetFromJsonAsync<List<JsonElement>>("race_control?session_key=latest", stoppingToken);
 
 		// Check for DNFs
-		var retirementEvents = analyzer.ProcessRetirements(rcList, trackedDrivers);
+		var retirementEvents = analyzer.ProcessRetirements(rcList);
 		foreach (var raceEvent in retirementEvents) {
-			await _channelWriter.WriteAsync(raceEvent, stoppingToken);
+			await HandleEventAsync(raceEvent, sessionInfo, stoppingToken);
 			_logger.LogWarning("💥 DRIVER EVENT (Retirement): Published to {Topic}", raceEvent.Topic);
 		}
 
 		// Check for fastest lap
-		var fastestLapEvents = analyzer.ProcessFastestLap(rcList, trackedDrivers);
+		var fastestLapEvents = analyzer.ProcessFastestLap(rcList);
 		foreach (var raceEvent in fastestLapEvents) {
-			await _channelWriter.WriteAsync(raceEvent, stoppingToken);
+			await HandleEventAsync(raceEvent, sessionInfo, stoppingToken);
 			_logger.LogInformation("🚀 DRIVER EVENT (Fastest Lap): Published to {Topic}", raceEvent.Topic);
 		}
 	}
 
 	/// <summary>
-	/// Checks the latest race intervals for tracked drivers and publishes relevant race events asynchronously.
+	/// Checks the latest race intervals and publishes relevant race events asynchronously.
 	/// </summary>
-	/// <remarks>No API request is made if no drivers are currently being tracked. Race events generated from
-	/// interval data are published to the associated channel.</remarks>
 	/// <param name="client">The HTTP client used to retrieve interval data from the remote API.</param>
 	/// <param name="analyzer">The analyzer responsible for processing interval data and generating race events.</param>
+	/// <param name="sessionInfo">The session information containing details about the current race session.</param>
 	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
 	/// <returns>A task that represents the asynchronous operation.</returns>
-	private async Task CheckIntervalsAsync(HttpClient client, F1RaceAnalyzer analyzer, CancellationToken stoppingToken) {
-		var trackedDrivers = _sessionState.TrackedDrivers.Keys.ToList();
-
-		if (trackedDrivers.Count == 0) {
-			return;
-		}
-
+	private async Task CheckIntervalsAsync(HttpClient client, F1RaceAnalyzer analyzer, SessionInfo sessionInfo, CancellationToken stoppingToken) {
 		var intervalsList = await client.GetFromJsonAsync<List<JsonElement>>("intervals?session_key=latest", stoppingToken);
-		var overrideEvents = analyzer.ProcessIntervals(intervalsList, trackedDrivers);
+		var overrideEvents = analyzer.ProcessIntervals(intervalsList);
 
 		foreach (var raceEvent in overrideEvents) {
-			await _channelWriter.WriteAsync(raceEvent, stoppingToken);
+			await HandleEventAsync(raceEvent, sessionInfo, stoppingToken);
 			_logger.LogInformation("⚡ DRIVER EVENT (Override): Published to {Topic}", raceEvent.Topic);
 		}
 	}
 
 	/// <summary>
-	/// Checks for new pit stop events for tracked drivers and publishes them asynchronously.
+	/// Checks for new pit stop events and publishes them asynchronously.
 	/// </summary>
-	/// <remarks>No API request is made if there are no tracked drivers. Only pit stop events relevant to currently
-	/// tracked drivers are processed and published.</remarks>
 	/// <param name="client">The HTTP client used to retrieve pit stop data from the remote API.</param>
-	/// <param name="analyzer">The analyzer responsible for processing pit stop data and identifying relevant events for tracked drivers.</param>
+	/// <param name="analyzer">The analyzer responsible for processing pit stop data and identifying relevant events.</param>
+	/// <param name="sessionInfo">The session information containing details about the current race session.</param>
 	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
 	/// <returns>A task that represents the asynchronous operation.</returns>
-	private async Task CheckPitStopsAsync(HttpClient client, F1RaceAnalyzer analyzer, CancellationToken stoppingToken) {
-		var trackedDrivers = _sessionState.TrackedDrivers.Keys.ToList();
-
-		if (trackedDrivers.Count == 0) {
-			return;
-		}
-
+	private async Task CheckPitStopsAsync(HttpClient client, F1RaceAnalyzer analyzer, SessionInfo sessionInfo, CancellationToken stoppingToken) {
 		var pitList = await client.GetFromJsonAsync<List<JsonElement>>("pit?session_key=latest", stoppingToken);
-		var pitEvents = analyzer.ProcessPitStops(pitList, trackedDrivers);
+		var pitEvents = analyzer.ProcessPitStops(pitList);
 
 		foreach (var raceEvent in pitEvents) {
-			await _channelWriter.WriteAsync(raceEvent, stoppingToken);
+			await HandleEventAsync(raceEvent, sessionInfo, stoppingToken);
 			_logger.LogInformation("🔧 DRIVER EVENT (Pit Entry): Published to {Topic}", raceEvent.Topic);
 		}
 	}
@@ -224,6 +208,10 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 		if (session != null && session.Value.ValueKind != JsonValueKind.Undefined) {
 			sessionInfo.SessionName = session.Value.GetProperty("session_name").GetString() ?? "Unknown";
 			sessionInfo.IsRace = sessionInfo.SessionName.Contains("Race", StringComparison.OrdinalIgnoreCase);
+
+			if (session.Value.TryGetProperty("session_key", out var keyProp)) {
+				sessionInfo.SessionKey = keyProp.GetInt32().ToString();
+			}
 
 			if (session.Value.TryGetProperty("date_start", out var startProp) &&
 				session.Value.TryGetProperty("date_end", out var endProp)) {
@@ -261,14 +249,15 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 	/// any detected events. If no flag change is detected, no event is published.</remarks>
 	/// <param name="client">The HTTP client used to retrieve the latest track status data.</param>
 	/// <param name="analyzer">The analyzer responsible for processing the track status and detecting flag change events.</param>
+	/// <param name="sessionInfo">The session information containing details about the current race session.</param>
 	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
 	/// <returns>A task that represents the asynchronous operation.</returns>
-	private async Task CheckTrackStatusAsync(HttpClient client, F1RaceAnalyzer analyzer, CancellationToken stoppingToken) {
+	private async Task CheckTrackStatusAsync(HttpClient client, F1RaceAnalyzer analyzer, SessionInfo sessionInfo, CancellationToken stoppingToken) {
 		var statusList = await client.GetFromJsonAsync<List<JsonElement>>("track_status?session_key=latest", stoppingToken);
 		var flagEvent = analyzer.ProcessTrackStatus(statusList?.LastOrDefault());
 
 		if (flagEvent != null) {
-			await _channelWriter.WriteAsync(flagEvent, stoppingToken);
+			await HandleEventAsync(flagEvent, sessionInfo, stoppingToken);
 			_logger.LogInformation("🏁 FLAG CHANGE detected and published.");
 		}
 	}
@@ -294,8 +283,46 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 		);
 
 		if (p1Event != null) {
-			await _channelWriter.WriteAsync(p1Event, stoppingToken);
+			await HandleEventAsync(p1Event, sessionInfo, stoppingToken);
 			_logger.LogWarning("🏆 P1 CHANGE detected and published.");
+		}
+	}
+
+	/// <summary>
+	/// Processes a race event by recording it for replay and, if applicable, publishing it live to the channel.
+	/// </summary>
+	/// <remarks>The event is always recorded for replay if a session key is present. Live publishing to the channel
+	/// occurs only if the event is relevant to a currently tracked driver or is a global event.</remarks>
+	/// <param name="raceEvent">The race event to handle. Contains the topic and payload information to be processed.</param>
+	/// <param name="sessionInfo">The session information associated with the event, including the session key and name.</param>
+	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
+	/// <returns>A task that represents the asynchronous operation.</returns>
+	private async Task HandleEventAsync(RaceEvent raceEvent, SessionInfo sessionInfo, CancellationToken stoppingToken) {
+		// Always save the event
+		if (!string.IsNullOrEmpty(sessionInfo.SessionKey)) {
+			await _eventRecorder.RecordEventAsync(
+				sessionId: sessionInfo.SessionKey,
+				sessionName: sessionInfo.SessionName,
+				topic: raceEvent.Topic,
+				payload: raceEvent.Payload
+			);
+		}
+
+		bool shouldPublishLive = true;
+
+		// check whether it is a driver specific event and if yes, whether the driver is currently tracked.
+		// If not tracked, we do NOT publish live - but we still record the event for replay.
+		if (raceEvent.Topic.StartsWith("f1/driver/")) {
+			var topicParts = raceEvent.Topic.Split('/');
+
+			if (topicParts.Length >= 3 && int.TryParse(topicParts[2], out int driverNum)) {
+				shouldPublishLive = _sessionState.TrackedDrivers.ContainsKey(driverNum);
+			}
+		}
+
+		// send if it is a global event or if it is a driver specific event for a currently tracked driver.
+		if (shouldPublishLive) {
+			await _channelWriter.WriteAsync(raceEvent, stoppingToken);
 		}
 	}
 

@@ -77,7 +77,7 @@ public class F1RaceAnalyzerTests {
 		string json = @"[{""driver_number"": 16, ""interval"": 0.800}]";
 		var mockData = JsonSerializer.Deserialize<List<JsonElement>>(json);
 
-		var events = _analyzer.ProcessIntervals(mockData, _trackedDrivers);
+		var events = _analyzer.ProcessIntervals(mockData);
 
 		events.Should().ContainSingle();
 		events[0].Topic.Should().Be("f1/driver/16/events");
@@ -97,8 +97,8 @@ public class F1RaceAnalyzerTests {
 		var dataUnder = JsonSerializer.Deserialize<List<JsonElement>>(@"[{""driver_number"": 16, ""interval"": 0.800}]");
 		var dataOver = JsonSerializer.Deserialize<List<JsonElement>>(@"[{""driver_number"": 16, ""interval"": 1.500}]");
 
-		_analyzer.ProcessIntervals(dataUnder, _trackedDrivers);
-		var events = _analyzer.ProcessIntervals(dataOver, _trackedDrivers);
+		_analyzer.ProcessIntervals(dataUnder);
+		var events = _analyzer.ProcessIntervals(dataOver);
 
 		events.Should().ContainSingle();
 		events[0].Payload.Should().Contain("\"value\":false");
@@ -115,8 +115,8 @@ public class F1RaceAnalyzerTests {
 		// Arrange: Leclerc drives to box in round 14
 		var pitData = JsonSerializer.Deserialize<List<JsonElement>>(@"[{""driver_number"": 16, ""lap"": 14}]");
 
-		var firstCheck = _analyzer.ProcessPitStops(pitData, _trackedDrivers);
-		var secondCheck = _analyzer.ProcessPitStops(pitData, _trackedDrivers);
+		var firstCheck = _analyzer.ProcessPitStops(pitData);
+		var secondCheck = _analyzer.ProcessPitStops(pitData);
 
 		firstCheck.Should().ContainSingle();
 		firstCheck[0].Topic.Should().Be("f1/driver/16/events");
@@ -139,8 +139,8 @@ public class F1RaceAnalyzerTests {
 			@"[{""message"": ""CAR 16 (LEC) RETIRED DUE TO HYDRAULICS""}]"
 		);
 
-		var firstCheck = _analyzer.ProcessRetirements(rcData, _trackedDrivers);
-		var secondCheck = _analyzer.ProcessRetirements(rcData, _trackedDrivers);
+		var firstCheck = _analyzer.ProcessRetirements(rcData);
+		var secondCheck = _analyzer.ProcessRetirements(rcData);
 
 		firstCheck.Should().ContainSingle();
 		firstCheck[0].Topic.Should().Be("f1/driver/16/events");
@@ -162,9 +162,9 @@ public class F1RaceAnalyzerTests {
 		var rcData1 = JsonSerializer.Deserialize<List<JsonElement>>(@"[{""message"": ""FASTEST LAP - CAR 16 (LEC) - 1:24.321""}]");
 		var rcData2 = JsonSerializer.Deserialize<List<JsonElement>>(@"[{""message"": ""FASTEST LAP - CAR 16 (LEC) - 1:23.999""}]");
 
-		var events1 = _analyzer.ProcessFastestLap(rcData1, _trackedDrivers);
-		var emptyCheck = _analyzer.ProcessFastestLap(rcData1, _trackedDrivers);
-		var events2 = _analyzer.ProcessFastestLap(rcData2, _trackedDrivers);
+		var events1 = _analyzer.ProcessFastestLap(rcData1);
+		var emptyCheck = _analyzer.ProcessFastestLap(rcData1);
+		var events2 = _analyzer.ProcessFastestLap(rcData2);
 
 		events1.Should().ContainSingle();
 		events1[0].Topic.Should().Be("f1/driver/16/events");
@@ -176,20 +176,23 @@ public class F1RaceAnalyzerTests {
 	}
 
 	/// <summary>
-	/// Verifies that calling the Reset method clears all internal states, allowing previously processed retirements to be
-	/// handled as new events.
+	/// Verifies that calling the Reset method clears all internal states of the analyzer, allowing previously processed
+	/// retirements to be detected again.
 	/// </summary>
-	/// <remarks>This test ensures that after invoking Reset, the analyzer does not retain any prior state that
-	/// would prevent reprocessing of the same input data. It is important for scenarios where the analyzer may be reused
-	/// or needs to be reinitialized between operations.</remarks>
+	/// <remarks>This test ensures that both the retired drivers list and the driver registry are reset, so that
+	/// after re-registering a driver, retirement events are processed as new. Use this test to confirm that the analyzer's
+	/// Reset method fully restores its initial state for subsequent operations.</remarks>
 	[Fact]
 	public void Reset_ShouldClearAllInternalStates() {
 		var rcData = JsonSerializer.Deserialize<List<JsonElement>>(@"[{""message"": ""CAR 16 (LEC) STOPPED ON TRACK""}]");
-		_analyzer.ProcessRetirements(rcData, _trackedDrivers);
 
+		var mockDriver = new OpenF1Driver { DriverNumber = 16, NameAcronym = "LEC", TeamColour = "FF0000" };
+		_analyzer.UpdateDriverRegistry([mockDriver]);
+		_analyzer.ProcessRetirements(rcData);
 		_analyzer.Reset();
+		_analyzer.UpdateDriverRegistry([mockDriver]);
 
-		var eventsAfterReset = _analyzer.ProcessRetirements(rcData, _trackedDrivers);
+		var eventsAfterReset = _analyzer.ProcessRetirements(rcData);
 
 		eventsAfterReset.Should().ContainSingle("Because the internal state was reset, the retirement should be processed as new.");
 	}

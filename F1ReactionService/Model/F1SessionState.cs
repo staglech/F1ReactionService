@@ -45,4 +45,14 @@ public class F1SessionState {
 	/// represent driver IDs, and the associated boolean values indicate whether each driver is actively tracked. The
 	/// collection is intended for concurrent use in multi-threaded scenarios.</remarks>
 	public ConcurrentDictionary<int, bool> TrackedDrivers { get; } = new();
+
+	/// <summary>
+	/// Gets or sets a value indicating whether the application is operating in replay mode.
+	/// </summary>
+	public bool IsReplayMode { get; set; }
+
+	/// <summary>
+	/// Gets or sets the identifier of the replay session associated with the current operation.
+	/// </summary>
+	public string? ReplaySessionId { get; set; }
 }

@@ -28,6 +28,8 @@ services:
     container_name: f1-reaction-service
     restart: unless-stopped
     network_mode: "host"
+    volumes:
+      - ./data:/app/data
     environment:
       - MQTT_HOST=127.0.0.1
       - MQTT_PORT=1883
@@ -40,13 +42,15 @@ services:
 ### 📥 Inbound Commands (Controlling the Service)
 Since the service is designed to save resources, it stays in standby mode until you wake it up. Send a message to the `f1/control` topic to control its behavior:
 
-* `START` - Wakes up the service and begins polling the OpenF1 API for live session data.
+* `START` - Wakes up the service and begins polling the OpenF1 API for live session data. e.g. based in a calendar event sent by HA to the service.
 * `STOP` - Puts the service back into standby mode.
 * `CALIBRATE_START` - Triggers a manual calibration/refresh of the current session data. The TV signal is usually slower than the API data. This can be used when a session starts, e.g when the lights go out or the pit lane opens.
 * `DEMO_START` - Fires up the built-in Hollywood Demo Mode to test your smart home lighting offline.
 * `TRACK_ADD_<driver_number>` - Adds a driver to the tracked drivers list (e.g., `TRACK_ADD_44` to track Lewis Hamilton). This is useful if you want to receive events related to specific drivers only. (see outbound events below)
 * `TRACK_REMOVE_<driver_number>` - Removes a driver from the tracked drivers list. 
 * `TRACK_CLEAR` - Clears the tracked drivers list. 
+* `REPLAY_START_<session_id>` - Starts a replay with a session ID
+* `REPLAY_STOP` - Stops a replay
 
 ### 📤 Outbound Events (Home Assistant Triggers)
 The service publishes lightweight JSON payloads when important events happen on track.
@@ -119,6 +123,56 @@ f1_service_control:
       data:
         topic: "f1/control"
         payload: "{{ command }}"
+```
+
+#### Calendar example
+This script will automatically start the service when a F1 calendar event occurs.
+
+```yaml
+alias: "F1: Reaction Service control"
+description: Starts the F1 reaction service based on F1 calendar events
+triggers:
+  - event: start
+    entity_id: calendar.formula_1
+    id: f1_start
+    trigger: calendar
+  - event: end
+    entity_id: calendar.formula_1
+    id: f1_end
+    trigger: calendar
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: f1_start
+        sequence:
+          - action: mqtt.publish
+            metadata: {}
+            data:
+              evaluate_payload: false
+              qos: 0
+              retain: false
+              topic: f1/service/command
+              payload: START
+          - action: notify.notify
+            data:
+              message: "🏎️ F1 service started: {{ trigger.calendar_event.summary }}"
+      - conditions:
+          - condition: trigger
+            id: f1_end
+        sequence:
+          - action: mqtt.publish
+            metadata: {}
+            data:
+              evaluate_payload: false
+              qos: 0
+              retain: false
+              topic: f1/service/command
+              payload: STOP
+          - action: notify.notify
+            data:
+              message: 🏁 F1 Service beendet.
+mode: single
 ```
 
 ### 2. The Red Flag Alert (Automation & Light Effect)

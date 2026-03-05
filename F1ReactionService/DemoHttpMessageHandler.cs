@@ -24,7 +24,7 @@ public class DemoHttpMessageHandler(F1SessionState sessionState) : HttpMessageHa
 		if (path.Contains("sessions")) {
 			// we fake a sunning session in order to prevent the worker switch to standby
 			var demoSession = new[] {
-				new { session_name = "Demo Race", date_start = "2020-01-01T00:00:00Z", date_end = "2099-01-01T00:00:00Z" }
+				new { session_key = 4711, session_name = "Demo Race", date_start = "2020-01-01T00:00:00Z", date_end = "2099-01-01T00:00:00Z" }
 			};
 			content = JsonSerializer.Serialize(demoSession);
 		} else if (path.Contains("drivers")) {
