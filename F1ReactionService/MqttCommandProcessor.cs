@@ -72,6 +72,25 @@ public class MqttCommandProcessor(
 				_logger.LogWarning("🧹 All tracked drivers cleared.");
 				break;
 
+			case string s when s.StartsWith("REPLAY_START_"):
+				if (int.TryParse(s.AsSpan("REPLAY_START_".Length), out int replaySessionId)) {
+					_sessionState.IsActive = false;
+					_sessionState.IsDemoMode = false;
+
+					// Replay Worker triggern
+					_sessionState.ReplaySessionId = replaySessionId.ToString();
+					_sessionState.IsReplayMode = true;
+
+					_logger.LogWarning("📼 REPLAY MODE activated for Session {SessionId}.", replaySessionId);
+				}
+				break;
+
+			case "REPLAY_STOP":
+				_sessionState.IsReplayMode = false;
+				_sessionState.ReplaySessionId = null;
+				_logger.LogWarning("⏹️ REPLAY MODE stopped.");
+				break;
+
 			default:
 				if (!string.IsNullOrWhiteSpace(command)) {
 					_logger.LogDebug("Received unknown command: {Command}", command);

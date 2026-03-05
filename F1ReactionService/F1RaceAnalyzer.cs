@@ -157,25 +157,24 @@ public class F1RaceAnalyzer {
 	}
 
 	/// <summary>
-	/// Processes interval data for the specified drivers and generates events when the override availability status
+	/// Processes interval data for all registered drivers and generates events when the override availability status
 	/// changes.
 	/// </summary>
 	/// <remarks>An event is generated only when a driver's override availability status transitions between
-	/// available and unavailable, based on the interval value. The method ignores drivers with missing or null interval
-	/// data.</remarks>
-	/// <param name="intervalsData">A list of JSON elements containing interval data for drivers. Each element should include driver and interval
-	/// information. Can be null or empty.</param>
-	/// <param name="trackedDrivers">A collection of driver numbers to monitor for interval changes. Must not be empty.</param>
-	/// <returns>A list of RaceEvent objects representing override availability status changes for the tracked drivers. The list is
-	/// empty if no relevant changes are detected.</returns>
-	public List<RaceEvent> ProcessIntervals(List<JsonElement>? intervalsData, IEnumerable<int> trackedDrivers) {
+	/// available and unavailable states, based on the interval value. Override is considered available when the interval
+	/// is greater than 0 and less than or equal to 1 second.</remarks>
+	/// <param name="intervalsData">A list of JSON elements containing interval data for drivers. Each element should include a 'driver_number' and an
+	/// 'interval' property. Can be null or empty.</param>
+	/// <returns>A list of race events representing changes in override availability status for drivers. The list is empty if no
+	/// changes are detected or if no interval data is provided.</returns>
+	public List<RaceEvent> ProcessIntervals(List<JsonElement>? intervalsData) {
 		var events = new List<RaceEvent>();
 
-		if (intervalsData == null || intervalsData.Count == 0 || !trackedDrivers.Any()) {
+		if (intervalsData == null || intervalsData.Count == 0) {
 			return events;
 		}
 
-		foreach (var driverNum in trackedDrivers) {
+		foreach (var driverNum in _driverRegistry.Keys) {
 			// Search for the most recent entry for this specific driver
 			var driverIntervalData = intervalsData.LastOrDefault(x =>
 				x.TryGetProperty("driver_number", out var dNum) && dNum.GetInt32() == driverNum);
@@ -219,23 +218,23 @@ public class F1RaceAnalyzer {
 	}
 
 	/// <summary>
-	/// Processes pit stop data for the specified drivers and generates race events for new pit entries.
+	/// Processes pit stop data and generates race events for drivers who have made a new pit stop since the last check.
 	/// </summary>
-	/// <remarks>Each driver is processed only if a new pit stop is detected since the last processed lap. The
-	/// method does not generate duplicate events for the same pit stop.</remarks>
-	/// <param name="pitData">A list of JSON elements containing pit stop information for drivers. Each element should include driver and lap
-	/// data. Can be null or empty if no pit stop data is available.</param>
-	/// <param name="trackedDrivers">A collection of driver numbers to track for pit stop events. Only drivers in this collection will be processed.</param>
-	/// <returns>A list of race events representing new pit entries for the tracked drivers. The list is empty if there are no new
-	/// pit stops or if the input data is null or empty.</returns>
-	public List<RaceEvent> ProcessPitStops(List<JsonElement>? pitData, IEnumerable<int> trackedDrivers) {
+	/// <remarks>This method compares the provided pit stop data against previously processed laps to ensure that
+	/// only new pit stop events are generated. It is intended to be called repeatedly as new pit stop data becomes
+	/// available.</remarks>
+	/// <param name="pitData">A list of JSON elements containing pit stop information for each driver. Each element should include the driver's
+	/// number and the lap number of the pit stop. Can be null or empty if no pit stop data is available.</param>
+	/// <returns>A list of race events representing new pit stop entries detected for drivers. The list is empty if no new pit stops
+	/// are found.</returns>
+	public List<RaceEvent> ProcessPitStops(List<JsonElement>? pitData) {
 		var events = new List<RaceEvent>();
 
-		if (pitData == null || pitData.Count == 0 || !trackedDrivers.Any()) {
+		if (pitData == null || pitData.Count == 0) {
 			return events;
 		}
 
-		foreach (var driverNum in trackedDrivers) {
+		foreach (var driverNum in _driverRegistry.Keys) {
 			var driverPitData = pitData.LastOrDefault(x =>
 				x.TryGetProperty("driver_number", out var dNum) && dNum.GetInt32() == driverNum);
 
@@ -274,17 +273,16 @@ public class F1RaceAnalyzer {
 	/// drivers not already marked as retired are processed.</remarks>
 	/// <param name="raceControlData">A list of JSON elements representing race control messages to be analyzed for retirement events. Can be null or
 	/// empty if no messages are available.</param>
-	/// <param name="trackedDrivers">A collection of driver numbers to monitor for retirement events. Only drivers in this collection will be checked.</param>
 	/// <returns>A list of RaceEvent objects representing detected retirements for the specified drivers. The list is empty if no
 	/// retirements are found or if the input is null or empty.</returns>
-	public List<RaceEvent> ProcessRetirements(List<JsonElement>? raceControlData, IEnumerable<int> trackedDrivers) {
+	public List<RaceEvent> ProcessRetirements(List<JsonElement>? raceControlData) {
 		var events = new List<RaceEvent>();
 
-		if (raceControlData == null || raceControlData.Count == 0 || !trackedDrivers.Any()) {
+		if (raceControlData == null || raceControlData.Count == 0) {
 			return events;
 		}
 
-		foreach (var driverNum in trackedDrivers) {
+		foreach (var driverNum in _driverRegistry.Keys) {
 			// We only check drivers that are not already marked as retired
 			if (!_retiredDrivers.Contains(driverNum)) {
 				string searchString = $"CAR {driverNum}";
@@ -320,20 +318,18 @@ public class F1RaceAnalyzer {
 	}
 
 	/// <summary>
-	/// Processes race control messages to detect and generate events for the fastest lap achieved by tracked drivers.
+	/// Processes the provided race control data to detect and generate events for the latest fastest lap message.
 	/// </summary>
-	/// <remarks>Only the most recent fastest lap message is considered. If a tracked driver is identified as
-	/// achieving the fastest lap, an event is generated. Duplicate fastest lap messages are ignored until a new message
-	/// appears.</remarks>
-	/// <param name="raceControlData">A list of JSON elements representing race control messages to be analyzed. Can be null or empty if no messages are
-	/// available.</param>
-	/// <param name="trackedDrivers">A collection of driver numbers to monitor for fastest lap events. Only events for these drivers will be generated.</param>
-	/// <returns>A list of RaceEvent objects representing fastest lap events for tracked drivers. The list is empty if no relevant
-	/// fastest lap event is detected.</returns>
-	public List<RaceEvent> ProcessFastestLap(List<JsonElement>? raceControlData, IEnumerable<int> trackedDrivers) {
+	/// <remarks>Only the most recent fastest lap message is considered, and duplicate messages are ignored. Events
+	/// are generated only for drivers present in the registry.</remarks>
+	/// <param name="raceControlData">A list of JSON elements representing race control messages to be analyzed for fastest lap events. Can be null or
+	/// empty.</param>
+	/// <returns>A list of race events corresponding to new fastest lap messages detected in the input data. The list is empty if no
+	/// new fastest lap is found.</returns>
+	public List<RaceEvent> ProcessFastestLap(List<JsonElement>? raceControlData) {
 		var events = new List<RaceEvent>();
 
-		if (raceControlData == null || raceControlData.Count == 0 || !trackedDrivers.Any()) {
+		if (raceControlData == null || raceControlData.Count == 0) {
 			return events;
 		}
 
@@ -350,8 +346,8 @@ public class F1RaceAnalyzer {
 			if (msg != _lastFastestLapMessage) {
 				_lastFastestLapMessage = msg;
 
-				// check if the message contains any of our tracked drivers - if yes, this is the new fastest lap holder and we fire an event for that driver
-				foreach (var driverNum in trackedDrivers) {
+				// check if the message contains any of our drivers - if yes, this is the new fastest lap holder and we fire an event for that driver
+				foreach (var driverNum in _driverRegistry.Keys) {
 					if (msg.Contains($"CAR {driverNum}")) {
 						string shortName = _driverRegistry.TryGetValue(driverNum, out var d) ? d.NameAcronym : "UNK";
 						string color = _driverRegistry.TryGetValue(driverNum, out var c) ? c.TeamColour : "FFFFFF";

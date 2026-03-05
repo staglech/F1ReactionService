@@ -40,4 +40,9 @@ public class SessionInfo {
 	/// Gets a value indicating whether the current session is newly created.
 	/// </summary>
 	public bool IsNewSession { get; private set; }
+
+	/// <summary>
+	/// Gets or sets the session key used to identify the current user session.
+	/// </summary>
+	public string SessionKey { get; set; } = string.Empty;
 }
