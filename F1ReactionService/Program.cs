@@ -26,7 +26,7 @@ builder.Services.AddSingleton<IMqttCommandProcessor, MqttCommandProcessor>();
 builder.Services.AddSingleton(Channel.CreateUnbounded<RaceEvent>());
 builder.Services.AddSingleton<F1EventRecorder>();
 
-builder.Services.AddHostedService<OpenF1Worker>();
+builder.Services.AddHostedService<OpenF1ApiWorker>();
 builder.Services.AddHostedService<MqttWorker>();
 builder.Services.AddHostedService<F1ReplayWorker>();
 

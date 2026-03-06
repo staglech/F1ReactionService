@@ -23,14 +23,14 @@ namespace F1ReactionService.Workers;
 /// <param name="channel">The channel used to send RaceEvent messages for processing. Cannot be null.</param>
 /// <param name="logger">The logger used to record diagnostic and operational information. Cannot be null.</param>
 /// <param name="sessionState">The session state object that tracks the current Formula 1 session context. Cannot be null.</param>
-public class OpenF1Worker(IHttpClientFactory httpClientFactory,
+public class OpenF1ApiWorker(IHttpClientFactory httpClientFactory,
 	Channel<RaceEvent> channel,
-	ILogger<OpenF1Worker> logger,
+	ILogger<OpenF1ApiWorker> logger,
 	F1EventRecorder eventRecorder,
 	F1SessionState sessionState) : BackgroundService {
 	private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
 	private readonly ChannelWriter<RaceEvent> _channelWriter = channel.Writer;
-	private readonly ILogger<OpenF1Worker> _logger = logger;
+	private readonly ILogger<OpenF1ApiWorker> _logger = logger;
 	private readonly F1SessionState _sessionState = sessionState;
 	private readonly F1EventRecorder _eventRecorder = eventRecorder;
 
@@ -39,6 +39,10 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 
 		SessionInfo currentSessionInfo = new();
 		DemoHttpMessageHandler? demoHandler = null;
+
+		int cycleCounter = 0;
+		int intraRequestDelayMs = 350;
+		int cycleDelaySec = 15;
 
 		_logger.LogInformation("🏎️ OpenF1Worker started.");
 
@@ -64,7 +68,10 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 					}
 
 					// update session info
-					await UpdateSessionInfo(client, currentSessionInfo, stoppingToken);
+					if (cycleCounter % 4 == 0) {
+						await UpdateSessionInfo(client, currentSessionInfo, stoppingToken);
+						await Task.Delay(intraRequestDelayMs, stoppingToken);
+					}
 
 					if (currentSessionInfo.IsStale) {
 						_logger.LogDebug("Last session is older than 24h. Ignoring data.");
@@ -74,26 +81,37 @@ public class OpenF1Worker(IHttpClientFactory httpClientFactory,
 
 					// update driver registry if needed
 					await CheckDriverRegistry(analyzer, currentSessionInfo, client, stoppingToken);
+					await Task.Delay(intraRequestDelayMs, stoppingToken);
 
 					// check track status
 					await CheckTrackStatusAsync(client, analyzer, currentSessionInfo, stoppingToken);
+					await Task.Delay(intraRequestDelayMs, stoppingToken);
 
 					// check for leader chagne
 					await CheckLeaderAsync(client, analyzer, currentSessionInfo, stoppingToken);
+					await Task.Delay(intraRequestDelayMs, stoppingToken);
 
 					// check weather for rain
-					await CheckWeatherAsync(client, analyzer, currentSessionInfo, stoppingToken);
+					if (cycleCounter % 2 == 0) {
+						await CheckWeatherAsync(client, analyzer, currentSessionInfo, stoppingToken);
+						await Task.Delay(intraRequestDelayMs, stoppingToken);
+					}
 
 					// Check for drivers
 					await CheckIntervalsAsync(client, analyzer, currentSessionInfo, stoppingToken);
+					await Task.Delay(intraRequestDelayMs, stoppingToken);
+
 					await CheckPitStopsAsync(client, analyzer, currentSessionInfo, stoppingToken);
+					await Task.Delay(intraRequestDelayMs, stoppingToken);
+
 					await CheckRaceControlDriverEventsAsync(client, analyzer, currentSessionInfo, stoppingToken);
 
 				} catch (Exception ex) {
 					_logger.LogError(ex, "Error fetching data from the OpenF1 API.");
 				}
 
-				await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+				cycleCounter++;
+				await Task.Delay(TimeSpan.FromSeconds(cycleDelaySec), stoppingToken);
 			}
 		} catch (OperationCanceledException) {
 			// Will be thrown when the stopoingToken is triggered by Ctrl+C or the container-stop.
