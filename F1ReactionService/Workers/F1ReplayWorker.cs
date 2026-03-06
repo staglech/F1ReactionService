@@ -2,6 +2,7 @@
 using F1ReactionService.Model;
 using Microsoft.EntityFrameworkCore;
 using System.Diagnostics;
+using System.Text.Json;
 using System.Threading.Channels;
 
 namespace F1ReactionService.Workers;
@@ -38,6 +39,13 @@ public class F1ReplayWorker(
 	/// stopped or cancelled.</returns>
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
 		logger.LogInformation("F1ReplayWorker started. Waiting for replay commands...");
+
+		_ = Task.Run(async () => {
+			while (!stoppingToken.IsCancellationRequested) {
+				await PublishAvailableSessionsAsync(stoppingToken);
+				await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+			}
+		}, stoppingToken);
 
 		while (!stoppingToken.IsCancellationRequested) {
 			if (!sessionState.IsReplayMode || string.IsNullOrEmpty(sessionState.ReplaySessionId)) {
@@ -118,5 +126,49 @@ public class F1ReplayWorker(
 
 		stopwatch.Stop();
 		logger.LogInformation("Replay for Session {SessionId} finished successfully.", sessionId);
+	}
+
+	/// <summary>
+	/// Publishes the list of available replay sessions to the Home Assistant MQTT discovery topic asynchronously.
+	/// </summary>
+	/// <remarks>If no sessions are available in the database, a default option is published to ensure the Home
+	/// Assistant UI remains functional. The published payload enables Home Assistant to display a dropdown of available
+	/// replay sessions for selection.</remarks>
+	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
+	/// <returns>A task that represents the asynchronous publish operation.</returns>
+	private async Task PublishAvailableSessionsAsync(CancellationToken stoppingToken) {
+		try {
+			using var db = dbFactory.CreateDbContext();
+
+			var unsortedSessions = await db.Sessions.ToListAsync(stoppingToken);
+			var sessions = unsortedSessions.OrderByDescending(s => s.StartTimeUtc).ToList();
+
+			// Home Assistant mag keine leeren Dropdowns. Wenn die DB noch leer ist, 
+			// schicken wir einfach einen Dummy, damit das UI nicht kaputt geht.
+			var optionsList = sessions.Count > 0
+				? sessions.Select(s => $"{s.Id} - {s.Name}").ToList()
+				: ["0000 - No Replays available yet"];
+
+			// Das ist der magische Payload, der HA sagt, wie das Dropdown aussehen soll
+			var discoveryPayload = new {
+				name = "F1 Replay Session",
+				unique_id = "f1_reaction_service_replay_select", // Wichtig für die HA-Datenbank
+				object_id = "f1_replay_session", // Erzeugt die Entität 'select.f1_replay_session'
+				icon = "mdi:car-sports", // Direkt ein schickes Icon fürs Dashboard!
+				command_topic = "f1/service/command",
+				command_template = "REPLAY_START_{{ value.split(' - ')[0] }}",
+				options = optionsList
+			};
+
+			var payload = JsonSerializer.Serialize(discoveryPayload);
+
+			// Wir feuern das an das reservierte Home Assistant Discovery Topic
+			var raceEvent = new RaceEvent("homeassistant/select/f1_reaction_service/replay_session/config", payload);
+			await channel.Writer.WriteAsync(raceEvent, stoppingToken);
+
+			logger.LogDebug("Published MQTT Discovery payload to HA with {Count} options.", optionsList.Count);
+		} catch (Exception ex) {
+			logger.LogError(ex, "Failed to publish available replays.");
+		}
 	}
 }

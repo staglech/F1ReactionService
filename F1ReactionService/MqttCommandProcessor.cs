@@ -27,13 +27,13 @@ public class MqttCommandProcessor(
 				if (_sessionState.WakeUpSignal.CurrentCount == 0) {
 					_sessionState.WakeUpSignal.Release();
 				}
-				_logger.LogWarning("🚀 F1-service awake! Start polling...");
+				_logger.LogWarning("F1-service awake! Start polling...");
 				break;
 
 			case "DEMO_START":
 				_sessionState.IsDemoMode = true;
 				_sessionState.IsActive = true;
-				_logger.LogWarning("🎪 STARTED DEMO-MODE! Running demo script...");
+				_logger.LogWarning("STARTED DEMO-MODE! Running demo script...");
 				if (_sessionState.WakeUpSignal.CurrentCount == 0) {
 					_sessionState.WakeUpSignal.Release();
 				}
@@ -42,34 +42,36 @@ public class MqttCommandProcessor(
 			case "STOP":
 				_sessionState.IsDemoMode = false;
 				_sessionState.IsActive = false;
+				_sessionState.IsReplayMode = false;
+				_sessionState.ReplaySessionId = null;
 				_sessionState.TrueDataStartTime = null;
-				_logger.LogWarning("💤 F1-service moves to STANDBY.");
+				_logger.LogWarning("F1-service moves to STANDBY.");
 				break;
 
 			case "CALIBRATE_START":
 				if (_sessionState.TrueDataStartTime.HasValue) {
 					_sessionState.CurrentDelay = DateTime.UtcNow - _sessionState.TrueDataStartTime.Value;
-					_logger.LogWarning("⏱️ CALIBRATE: Delay set to {S}s.", _sessionState.CurrentDelay.TotalSeconds);
+					_logger.LogWarning("CALIBRATE: Delay set to {S}s.", _sessionState.CurrentDelay.TotalSeconds);
 				}
 				break;
 
 			case string s when s.StartsWith("TRACK_ADD_"):
 				if (int.TryParse(s.AsSpan("TRACK_ADD_".Length), out int addNum)) {
 					_sessionState.TrackedDrivers.TryAdd(addNum, true);
-					_logger.LogWarning("🎯 Tracking activated for driver {DriverNum}.", addNum);
+					_logger.LogWarning("Tracking activated for driver {DriverNum}.", addNum);
 				}
 				break;
 
 			case string s when s.StartsWith("TRACK_REMOVE_"):
 				if (int.TryParse(s.AsSpan("TRACK_REMOVE_".Length), out int removeNum)) {
 					_sessionState.TrackedDrivers.TryRemove(removeNum, out _);
-					_logger.LogWarning("🛑 Tracking disabled for driver {DriverNum}.", removeNum);
+					_logger.LogWarning("Tracking disabled for driver {DriverNum}.", removeNum);
 				}
 				break;
 
 			case "TRACK_CLEAR":
 				_sessionState.TrackedDrivers.Clear();
-				_logger.LogWarning("🧹 All tracked drivers cleared.");
+				_logger.LogWarning("All tracked drivers cleared.");
 				break;
 
 			case string s when s.StartsWith("REPLAY_START_"):
@@ -81,14 +83,14 @@ public class MqttCommandProcessor(
 					_sessionState.ReplaySessionId = replaySessionId.ToString();
 					_sessionState.IsReplayMode = true;
 
-					_logger.LogWarning("📼 REPLAY MODE activated for Session {SessionId}.", replaySessionId);
+					_logger.LogWarning("REPLAY MODE activated for Session {SessionId}.", replaySessionId);
 				}
 				break;
 
 			case "REPLAY_STOP":
 				_sessionState.IsReplayMode = false;
 				_sessionState.ReplaySessionId = null;
-				_logger.LogWarning("⏹️ REPLAY MODE stopped.");
+				_logger.LogWarning("REPLAY MODE stopped.");
 				break;
 
 			default:

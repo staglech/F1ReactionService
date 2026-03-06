@@ -6,6 +6,8 @@
     <File Path="Dockerfile" />
     <File Path="README.md" />
     <File Path="release.ps1" />
+    <File Path="Replay_Select.png" />
+    <File Path="Replay_Select_Detail.png" />
   </Folder>
   <Project Path="F1ReactionService.Tests/F1ReactionService.Tests.csproj" />
   <Project Path="F1ReactionService/F1ReactionService.csproj" />
