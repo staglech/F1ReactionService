@@ -1,4 +1,5 @@
 using F1ReactionService;
+using F1ReactionService.Auth;
 using F1ReactionService.Data;
 using F1ReactionService.Model;
 using F1ReactionService.Recording;
@@ -17,18 +18,24 @@ builder.Logging.AddSimpleConsole(options => {
 	options.SingleLine = true;
 });
 
+builder.Services.AddTransient<OpenF1AuthHandler>();
 builder.Services.AddHttpClient("OpenF1", client => {
 	client.BaseAddress = new Uri("https://api.openf1.org/v1/");
-});
+	client.DefaultRequestHeaders.Add("User-Agent", "F1ReactionService/1.0");
+	client.DefaultRequestHeaders.Add("Accept", "application/json");
+})
+.AddHttpMessageHandler<OpenF1AuthHandler>();
 
+builder.Services.AddSingleton<OpenF1TokenManager>();
 builder.Services.AddSingleton<F1SessionState>();
 builder.Services.AddSingleton<IMqttCommandProcessor, MqttCommandProcessor>();
 builder.Services.AddSingleton(Channel.CreateUnbounded<RaceEvent>());
 builder.Services.AddSingleton<F1EventRecorder>();
 
-builder.Services.AddHostedService<OpenF1ApiWorker>();
 builder.Services.AddHostedService<MqttWorker>();
 builder.Services.AddHostedService<F1ReplayWorker>();
+builder.Services.AddHostedService<OpenF1LiveMqttWorker>();
+builder.Services.AddHostedService<OpenF1ApiWorker>();
 
 var host = builder.Build();
 
