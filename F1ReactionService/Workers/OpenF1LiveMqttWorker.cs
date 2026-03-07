@@ -138,9 +138,6 @@ public class OpenF1LiveMqttWorker(
 	/// <param name="stoppingToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
 	/// <returns>A task that represents the asynchronous operation.</returns>
 	private async Task HandleEventAsync(RaceEvent raceEvent, SessionInfo sessionInfo, CancellationToken stoppingToken) {
-		if (!string.IsNullOrEmpty(sessionInfo.SessionKey)) {
-			await eventRecorder.RecordEventAsync(sessionInfo.SessionKey, sessionInfo.SessionName, raceEvent.Topic, raceEvent.Payload);
-		}
 
 		bool shouldPublishLive = true;
 		if (raceEvent.Topic.StartsWith("f1/driver/")) {
