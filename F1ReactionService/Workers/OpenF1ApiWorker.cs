@@ -1,5 +1,5 @@
 ﻿using F1ReactionService.Data;
-using F1ReactionService.Recording;
+using F1ReactionService.Model;
 using Microsoft.EntityFrameworkCore;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -13,12 +13,11 @@ namespace F1ReactionService.Workers;
 public class OpenF1ApiWorker(
 	IHttpClientFactory httpClientFactory,
 	ILogger<OpenF1ApiWorker> logger,
-	F1EventRecorder eventRecorder,
 	IDbContextFactory<F1DbContext> dbFactory) : BackgroundService {
 	private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
 	private readonly ILogger<OpenF1ApiWorker> _logger = logger;
-	private readonly F1EventRecorder _eventRecorder = eventRecorder;
 	private readonly IDbContextFactory<F1DbContext> _dbFactory = dbFactory;
+	private F1RaceAnalyzer _raceAnalyzer;
 
 	/// <inheritdoc/>
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -104,12 +103,44 @@ public class OpenF1ApiWorker(
 	/// <returns>A task that represents the asynchronous import operation.</returns>
 	private async Task ImportSessionDataAsync(HttpClient client, string sessionKey, string sessionName, CancellationToken stoppingToken) {
 		var endpoints = new[] {
-			"track_status",
-			"race_control",
-			"weather",
-			"pit",
-			"position?position=1"
-		};
+		"track_status",
+		"race_control",
+		"weather",
+		"pit",
+		"position?position=1"
+	};
+
+		// 1. Startzeit und Session-Typ abfragen
+		var sessionInfo = await client.GetFromJsonAsync<List<JsonElement>>($"sessions?session_key={sessionKey}", stoppingToken);
+		if (sessionInfo == null || sessionInfo.Count == 0) {
+			return;
+		}
+
+		var trueDataStartTime = sessionInfo[0].GetProperty("date_start").GetDateTime();
+		var sessionType = sessionInfo[0].GetProperty("session_type").GetString();
+		bool isRace = sessionType == "Race";
+
+		_raceAnalyzer ??= new F1RaceAnalyzer();
+		_raceAnalyzer.Reset();
+		var drivers = await client.GetFromJsonAsync<List<OpenF1Driver>>($"drivers?session_key={sessionKey}", stoppingToken);
+		if (drivers != null) {
+			_raceAnalyzer.UpdateDriverRegistry(drivers);
+		}
+
+		using var db = await _dbFactory.CreateDbContextAsync(stoppingToken);
+
+		var existingSession = await db.Sessions.FindAsync([sessionKey], stoppingToken);
+		if (existingSession == null) {
+			db.Sessions.Add(new Data.Models.RaceSession {
+				Id = sessionKey,
+				Name = sessionName,
+				Season = trueDataStartTime.Year,
+				StartTimeUtc = trueDataStartTime
+			});
+
+			await db.SaveChangesAsync(stoppingToken);
+			_logger.LogInformation("Created new session record: {SessionName} ({SessionKey})", sessionName, sessionKey);
+		}
 
 		foreach (var endpoint in endpoints) {
 			var url = $"{endpoint}{(endpoint.Contains('?') ? "&" : "?")}session_key={sessionKey}";
@@ -121,9 +152,62 @@ public class OpenF1ApiWorker(
 					var cleanTopic = $"f1/{endpoint.Split('?')[0]}";
 
 					foreach (var item in eventList) {
-						await _eventRecorder.RecordEventAsync(sessionKey, sessionName, cleanTopic, item.GetRawText());
+						if (!item.TryGetProperty("date", out var dateProp)) {
+							continue;
+						}
+
+						var eventTime = dateProp.GetDateTime();
+						var offsetMs = (long)(eventTime - trueDataStartTime).TotalMilliseconds;
+						if (offsetMs < 0) {
+							offsetMs = 0;
+						}
+
+						Model.RaceEvent? singleEvent = null;
+						List<Model.RaceEvent>? multipleEvents = null;
+
+						switch (cleanTopic) {
+							case "f1/track_status":
+								singleEvent = _raceAnalyzer.ProcessTrackStatus(item);
+								break;
+							case "f1/weather":
+								singleEvent = _raceAnalyzer.ProcessWeather(item);
+								break;
+							case "f1/position":
+								singleEvent = _raceAnalyzer.ProcessLeader(item, isRace, sessionName, false);
+								break;
+							case "f1/pit":
+								// Die Methode erwartet eine Liste, wir übergeben das aktuelle Element als Liste
+								multipleEvents = _raceAnalyzer.ProcessPitStops([item]);
+								break;
+							case "f1/race_control":
+								multipleEvents = [];
+								multipleEvents.AddRange(_raceAnalyzer.ProcessRetirements([item]));
+								multipleEvents.AddRange(_raceAnalyzer.ProcessFastestLap([item]));
+								break;
+						}
+
+						if (singleEvent != null) {
+							db.Events.Add(new Data.Models.RaceEvent {
+								SessionId = sessionKey,
+								Topic = singleEvent.Topic,
+								Payload = singleEvent.Payload,
+								SyncOffsetMs = offsetMs
+							});
+						}
+
+						if (multipleEvents != null && multipleEvents.Count > 0) {
+							foreach (var ev in multipleEvents) {
+								db.Events.Add(new Data.Models.RaceEvent {
+									SessionId = sessionKey,
+									Topic = ev.Topic,
+									Payload = ev.Payload,
+									SyncOffsetMs = offsetMs
+								});
+							}
+						}
 					}
 
+					await db.SaveChangesAsync(stoppingToken);
 					_logger.LogDebug("Imported {Count} events for {Topic}.", eventList.Count, cleanTopic);
 				}
 			} catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound) {
