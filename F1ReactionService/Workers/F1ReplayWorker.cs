@@ -149,6 +149,8 @@ public class F1ReplayWorker(
 				? sessions.Select(s => $"{s.Id} - {s.Name}").ToList()
 				: ["0000 - No Replays available yet"];
 
+			optionsList.Insert(0, "9999 - RESET");
+
 			// Das ist der magische Payload, der HA sagt, wie das Dropdown aussehen soll
 			var discoveryPayload = new {
 				name = "F1 Replay Session",

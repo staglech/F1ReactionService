@@ -52,6 +52,7 @@ Send a message to the `f1/service/command` topic to control the service's behavi
 * `START` - Wakes up the service and connects to the live stream (if credentials are provided).
 * `STOP` - Puts the service back into standby mode and halts any running replays.
 * `CALIBRATE_START` - Triggers a manual calibration/refresh of the current session data. Useful to sync the TV broadcast delay with the API data.
+* `CALIBRATE_ADJUST_<number>` - Adjusts the delay in ms. The number can be positive or negative (1000 or -1000).
 * `DEMO_START` - Fires up the built-in Hollywood Demo Mode to test your smart home lighting.
 * `TRACK_ADD_<driver_number>` - Adds a driver to the tracked drivers list (e.g., `TRACK_ADD_44`).
 * `TRACK_REMOVE_<driver_number>` - Removes a driver from the tracked drivers list. 

@@ -62,31 +62,52 @@ public class F1RaceAnalyzer {
 	}
 
 	/// <summary>
-	/// Processes the current track status and generates a new race event if the status has changed.
+	/// Processes race control data to detect track status changes (Flags, Safety Cars, VSC).
 	/// </summary>
-	/// <remarks>This method compares the provided track status with the last known status. If the status has
-	/// changed, it creates a new race event containing the updated flag and message information. If the status has not
-	/// changed or the input is null or undefined, the method returns null.</remarks>
-	/// <param name="currentTrackStatus">A JSON element representing the current track status. Must contain a 'status' property. If null or undefined, no
-	/// event is generated.</param>
-	/// <returns>A new RaceEvent instance if the track status has changed; otherwise, null.</returns>
-	public RaceEvent? ProcessTrackStatus(JsonElement? currentTrackStatus) {
-		if (currentTrackStatus == null || currentTrackStatus.Value.ValueKind == JsonValueKind.Undefined) {
-			return null;
+	public List<RaceEvent> ProcessFlags(List<JsonElement>? raceControlData) {
+		var events = new List<RaceEvent>();
+
+		if (raceControlData == null || raceControlData.Count == 0) {
+			return events;
 		}
 
-		var status = currentTrackStatus.Value.GetProperty("status").GetString();
+		foreach (var x in raceControlData) {
+			string? flag = null;
+			string message = x.TryGetProperty("message", out var msgProp) ? (msgProp.GetString() ?? "") : "";
 
-		// Has the track status changed since the last check?
-		if (status != _lastStatus && status != null) {
-			_lastStatus = status;
-			return new RaceEvent("f1/race/flag_status", JsonSerializer.Serialize(new {
-				flag = MapFlag(status),
-				message = currentTrackStatus.Value.GetProperty("message").GetString()
-			}));
+			if (x.TryGetProperty("flag", out var flagProp) && flagProp.ValueKind == JsonValueKind.String) {
+				flag = flagProp.GetString();
+			}
+
+			if (string.IsNullOrEmpty(flag) && x.TryGetProperty("category", out var catProp) && catProp.ValueKind == JsonValueKind.String) {
+				var category = catProp.GetString();
+				if (category == "SafetyCar") {
+					flag = message.Contains("VIRTUAL") ? "VSC" : "SC";
+				}
+			}
+
+			if (!string.IsNullOrEmpty(flag)) {
+				string normalizedFlag = flag.ToUpperInvariant();
+				if (normalizedFlag.Contains("DOUBLE YELLOW")) {
+					normalizedFlag = "YELLOW";
+				}
+
+				if (normalizedFlag == "CLEAR") {
+					normalizedFlag = "GREEN";
+				}
+
+				if (normalizedFlag != _lastStatus) {
+					_lastStatus = normalizedFlag;
+
+					events.Add(new RaceEvent("f1/race/flag_status", JsonSerializer.Serialize(new {
+						flag = normalizedFlag,
+						message = message
+					})));
+				}
+			}
 		}
 
-		return null; // nothing happens
+		return events;
 	}
 
 	/// <summary>

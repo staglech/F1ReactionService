@@ -28,44 +28,6 @@ public class F1RaceAnalyzerTests {
 	}
 
 	/// <summary>
-	/// Verifies that the ProcessTrackStatus method returns a race event with a red flag status when the track status
-	/// changes to suspended.
-	/// </summary>
-	/// <remarks>This test simulates a scenario where the input JSON indicates a session suspension, corresponding
-	/// to a red flag in Formula 1. It asserts that the returned event contains the correct topic and payload reflecting
-	/// the red flag status.</remarks>
-	[Fact]
-	public void ProcessTrackStatus_ShouldReturnRaceEvent_WhenStatusChangesToRed() {
-		var analyzer = new F1RaceAnalyzer();
-
-		string jsonString = "{\"status\": \"5\", \"message\": \"Session Suspended\"}";
-		var jsonElement = JsonSerializer.Deserialize<JsonElement>(jsonString);
-		var result = analyzer.ProcessTrackStatus(jsonElement);
-
-		result.Should().NotBeNull();
-		result!.Topic.Should().Be("f1/race/flag_status");
-		result.Payload.Should().Contain("\"flag\":\"RED\"");
-	}
-
-	/// <summary>
-	/// Verifies that the ProcessTrackStatus method returns null when the track status does not change between consecutive
-	/// calls.
-	/// </summary>
-	/// <remarks>This test ensures that no result is produced if the status remains the same, confirming that the
-	/// method only returns a value when a status change occurs.</remarks>
-	[Fact]
-	public void ProcessTrackStatus_ShouldReturnNull_WhenStatusRemainsTheSame() {
-		var analyzer = new F1RaceAnalyzer();
-		string jsonString = "{\"status\": \"1\", \"message\": \"Track Clear\"}";
-		var jsonElement = JsonSerializer.Deserialize<JsonElement>(jsonString);
-
-		analyzer.ProcessTrackStatus(jsonElement);
-		var result = analyzer.ProcessTrackStatus(jsonElement);
-
-		result.Should().BeNull("the status in the second run has not chaned");
-	}
-
-	/// <summary>
 	/// Verifies that the override available event is fired when the interval gap is less than one second.
 	/// </summary>
 	/// <remarks>This test ensures that when a driver is within 0.8 seconds of the car ahead, the analyzer correctly

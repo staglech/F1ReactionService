@@ -55,6 +55,15 @@ public class MqttCommandProcessor(
 				}
 				break;
 
+			case string s when s.StartsWith("CALIBRATE_ADJUST_"):
+				if (int.TryParse(s.AsSpan("CALIBRATE_ADJUST_".Length), out int adjustMs)) {
+					var newDelay = _sessionState.CurrentDelay + TimeSpan.FromMilliseconds(adjustMs);
+					_sessionState.CurrentDelay = newDelay.TotalMilliseconds < 0 ? TimeSpan.Zero : newDelay;
+
+					_logger.LogWarning("CALIBRATE: Adjusted delay by {Ms}ms. New delay: {S}s.", adjustMs, _sessionState.CurrentDelay.TotalSeconds);
+				}
+				break;
+
 			case string s when s.StartsWith("TRACK_ADD_"):
 				if (int.TryParse(s.AsSpan("TRACK_ADD_".Length), out int addNum)) {
 					_sessionState.TrackedDrivers.TryAdd(addNum, true);
@@ -79,11 +88,15 @@ public class MqttCommandProcessor(
 					_sessionState.IsActive = false;
 					_sessionState.IsDemoMode = false;
 
-					// Replay Worker triggern
-					_sessionState.ReplaySessionId = replaySessionId.ToString();
-					_sessionState.IsReplayMode = true;
-
-					_logger.LogWarning("REPLAY MODE activated for Session {SessionId}.", replaySessionId);
+					if (replaySessionId == 9999) {
+						_sessionState.IsReplayMode = false;
+						_sessionState.ReplaySessionId = null;
+						_logger.LogWarning("REPLAY MODE reset");
+					} else {
+						_sessionState.ReplaySessionId = replaySessionId.ToString();
+						_sessionState.IsReplayMode = true;
+						_logger.LogWarning("REPLAY MODE activated for Session {SessionId}.", replaySessionId);
+					}
 				}
 				break;
 

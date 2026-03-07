@@ -103,7 +103,6 @@ public class OpenF1ApiWorker(
 	/// <returns>A task that represents the asynchronous import operation.</returns>
 	private async Task ImportSessionDataAsync(HttpClient client, string sessionKey, string sessionName, CancellationToken stoppingToken) {
 		var endpoints = new[] {
-		"track_status",
 		"race_control",
 		"weather",
 		"pit",
@@ -166,9 +165,6 @@ public class OpenF1ApiWorker(
 						List<Model.RaceEvent>? multipleEvents = null;
 
 						switch (cleanTopic) {
-							case "f1/track_status":
-								singleEvent = _raceAnalyzer.ProcessTrackStatus(item);
-								break;
 							case "f1/weather":
 								singleEvent = _raceAnalyzer.ProcessWeather(item);
 								break;
@@ -181,6 +177,7 @@ public class OpenF1ApiWorker(
 								break;
 							case "f1/race_control":
 								multipleEvents = [];
+								multipleEvents.AddRange(_raceAnalyzer.ProcessFlags([item]));
 								multipleEvents.AddRange(_raceAnalyzer.ProcessRetirements([item]));
 								multipleEvents.AddRange(_raceAnalyzer.ProcessFastestLap([item]));
 								break;

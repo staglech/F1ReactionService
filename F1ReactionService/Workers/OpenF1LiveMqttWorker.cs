@@ -96,18 +96,13 @@ public class OpenF1LiveMqttWorker(
 		RaceEvent? generatedEvent = null;
 		List<RaceEvent>? multipleEvents = null;
 
-		if (topic.Contains("track_status")) {
-			generatedEvent = _analyzer.ProcessTrackStatus(jsonDoc.RootElement);
-			if (generatedEvent != null) {
-				logger.LogInformation("LIVE FLAG CHANGE: {Payload}", generatedEvent.Payload);
-			}
-		} else if (topic.Contains("position")) {
+		if (topic.Contains("position")) {
 			generatedEvent = _analyzer.ProcessLeader(jsonDoc.RootElement, _currentSessionInfo.IsRace, _currentSessionInfo.SessionName, _currentSessionInfo.IsLive);
 		} else if (topic.Contains("weather")) {
 			generatedEvent = _analyzer.ProcessWeather(jsonDoc.RootElement);
 		} else if (topic.Contains("race_control")) {
-			multipleEvents =
-			[
+			multipleEvents = [
+				.. _analyzer.ProcessFlags(jsonList),
 				.. _analyzer.ProcessRetirements(jsonList),
 				.. _analyzer.ProcessFastestLap(jsonList),
 			];
