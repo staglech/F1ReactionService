@@ -203,6 +203,68 @@ automation:
     mode: restart
 ```
 
+### 3. Light control Flags and P1 change
+This automation is my main automation which will control my lights and will react to flags, SC and P1 changes.
+
+```yaml
+alias: F1 Race Lighting Control
+description: Controls Hue lights based on F1 race status
+triggers:
+  - trigger: mqtt
+    id: flag_update
+    topic: f1/race/flag_status
+  - trigger: mqtt
+    id: leader_update
+    topic: f1/race/p1
+conditions:
+  - condition: state
+    entity_id: input_boolean.f1_mode
+    state: "on"
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: flag_update
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ trigger.payload_json.flag == 'RED' }}"
+                sequence:
+                  - action: script.f1_red_flag
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ trigger.payload_json.flag in ['SAFETY CAR', 'SC',
+                      'VSC'] }}
+                sequence:
+                  - action: script.f1_safety_car
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ trigger.payload_json.flag in ['YELLOW', 'DOUBLE
+                      YELLOW'] }}
+                sequence:
+                  - action: script.f1_yellow_flag
+      - conditions:
+          - condition: trigger
+            id: leader_update
+        sequence:
+          - action: light.turn_on
+            target:
+              entity_id:
+                - light.living_room_lights
+                - light.hue_spot
+            data:
+              brightness_pct: 100
+              rgb_color: >
+                {% set hex = trigger.payload_json.color %} [{{ hex[1:3] |
+                int(base=16) }}, {{ hex[3:5] | int(base=16) }}, {{ hex[5:7] |
+                int(base=16) }}]
+mode: restart
+
+```
+
 ### 3. Replay Mode (Zero-Config)
 Thanks to MQTT Discovery, the service will automatically create an entity in your Home Assistant for the available replays! 
 
